@@ -13,6 +13,7 @@
 const { createEngine, healthCheck } = require('./src/agents');
 const { Planner } = require('./src/planner');
 const { Supervisor } = require('./src/supervisor');
+const { ProgressMonitor } = require('./src/monitor');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -306,6 +307,17 @@ async function executePlan(plan) {
   const supervisor = new Supervisor(engine, {
     logger: { logDir: path.join(executeDir, '.appmaker', 'logs') }
   });
+
+  // 启动 UI 看板
+  const monitor = new ProgressMonitor(engine, 8088);
+  const monitorUrl = await monitor.start();
+  console.log(`\n\x1b[36m🚀 已开启浮动进度看板: ${monitorUrl}\x1b[0m\n`);
+  
+  // 自动弹出默认浏览器展示 Widget
+  const { exec } = require('child_process');
+  if (process.platform === 'win32') exec(`start ${monitorUrl}`);
+  else if (process.platform === 'darwin') exec(`open ${monitorUrl}`);
+  else exec(`xdg-open ${monitorUrl}`);
 
   console.log('='.repeat(50));
   console.log(`开始执行: ${plan.project.name}`);

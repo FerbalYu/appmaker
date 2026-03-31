@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>appMaker - Progress Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body {
+      background: radial-gradient(circle at top right, #1e1b4b, #020617);
+      color: #f8fafc;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      margin: 0;
+      height: 100vh;
+    }
+    .glass {
+      background: rgba(30, 41, 59, 0.4);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    }
+    .text-glow {
+      text-shadow: 0 0 10px rgba(167, 139, 250, 0.5);
+    }
+    .pulse-ring {
+      animation: pulsate 2s infinite ease-out;
+    }
+    @keyframes pulsate {
+      0% { transform: scale(0.8); opacity: 0.5; }
+      100% { transform: scale(2.5); opacity: 0; }
+    }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+    
+    /* Transitions */
+    .list-enter-active, .list-leave-active { transition: all 0.5s ease; }
+    .list-enter-from, .list-leave-to { opacity: 0; transform: translateX(30px); }
+  </style>
+</head>
+<body class="flex items-center justify-center p-6 text-sm">
+
+  <div id="app" class="w-full max-w-5xl h-full flex flex-col gap-6" v-cloak>
+    
+    <!-- Top Header Widget -->
+    <div class="glass rounded-2xl p-5 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-4">
+        <div class="relative w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 shadow-lg shadow-indigo-500/30">
+          <div class="absolute inset-0 rounded-full border border-indigo-400 opacity-50 pulse-ring" v-if="state === 'Running'"></div>
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-glow">appMaker Engine</h1>
+          <p class="text-slate-400 text-xs mt-0.5">Status: <span :class="{'text-indigo-400': state==='Running', 'text-emerald-400': state==='Idle'}">{{state}}</span> <span class="mx-2">|</span> Total Tokens: <span class="font-mono text-amber-300 font-bold">{{tokens.toLocaleString()}}</span></p>
+        </div>
+      </div>
+      
+      <div class="text-right">
+        <div class="text-xs text-slate-400 uppercase tracking-widest mb-1">Current Milestone</div>
+        <div class="text-lg font-semibold text-slate-200">{{currentMilestone}}</div>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex gap-6 min-h-0">
+      
+      <!-- Left: Active Tasks -->
+      <div class="glass flex-1 rounded-2xl overflow-hidden flex flex-col">
+        <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
+          <h2 class="font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+            Active Tasks
+            <span class="ml-2 px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs">{{activeTasksArray.length}}</span>
+          </h2>
+        </div>
+        <div class="flex-1 overflow-y-auto p-5">
+          <div v-if="activeTasksArray.length === 0" class="h-full flex flex-col items-center justify-center text-slate-500">
+            <svg class="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+            No active tasks running.
+          </div>
+          
+          <TransitionGroup name="list" tag="div" class="space-y-4">
+            <div v-for="task in activeTasksArray" :key="task.id" class="bg-slate-800/50 rounded-xl p-4 border border-white/5 relative overflow-hidden group">
+              <div class="absolute top-0 left-0 h-1 w-full bg-slate-700/50">
+                <div class="h-full bg-indigo-500 w-1/3 animate-pulse"></div>
+              </div>
+              <div class="flex justify-between items-start mb-2 mt-1">
+                <span class="font-mono text-xs text-indigo-300 bg-indigo-500/10 px-2 py-1 rounded">#{{task.id}}</span>
+                <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{{task.type}}</span>
+              </div>
+              <p class="text-sm font-medium text-slate-200 mt-2">{{task.description}}</p>
+              <div class="mt-4 flex justify-between items-center text-xs">
+                <div class="flex items-center gap-1.5 text-slate-400">
+                  <svg class="w-3.5 h-3.5 animate-spin text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32" stroke-linecap="round"/></svg>
+                  Processing...
+                </div>
+                <div class="text-slate-500 font-mono">{{formatTime(task.startTime)}}</div>
+              </div>
+            </div>
+          </TransitionGroup>
+        </div>
+      </div>
+
+      <!-- Right: Activity Log -->
+      <div class="glass w-96 shrink-0 rounded-2xl overflow-hidden flex flex-col">
+        <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
+          <h2 class="font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            Activity Stream
+          </h2>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 font-mono text-xs">
+          <TransitionGroup name="list" tag="div" class="space-y-3">
+            <div v-for="log in sortedLogs" :key="log.id" class="flex gap-3 items-start opacity-80 hover:opacity-100 transition-opacity">
+              <span class="text-slate-500 shrink-0">{{log.timeText}}</span>
+              <div :class="{
+                'text-indigo-300': log.type === 'start',
+                'text-emerald-400': log.type === 'done',
+                'text-rose-400': log.type === 'error',
+                'text-amber-300': log.type === 'review',
+                'text-sky-300': log.type === 'milestone'
+              }">
+                {{log.message}}
+              </div>
+            </div>
+          </TransitionGroup>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const state = ref('Idle');
+        const tokens = ref(0);
+        const currentMilestone = ref('Waiting...');
+        
+        // Use a reactive map so we can easily add/remove by ID
+        const activeTasksMap = ref(new Map());
+        const logs = ref([]);
+        let logCounter = 0;
+
+        const addLog = (type, message) => {
+          const now = new Date();
+          logs.value.unshift({
+            id: ++logCounter,
+            type,
+            message,
+            timestamp: now,
+            timeText: now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })
+          });
+          if (logs.value.length > 50) logs.value.pop();
+        };
+
+        const handleEvent = (event, data) => {
+          state.value = 'Running';
+          
+          if (event === 'milestone:start') {
+            currentMilestone.value = data.milestone.name;
+            addLog('milestone', `🚀 Milestone started: ${currentMilestone.value}`);
+          } 
+          else if (event === 'milestone:done') {
+            addLog('milestone', `✅ Milestone completed: ${data.milestone.name}`);
+          }
+          else if (event === 'task:start') {
+            const task = data.task || data;
+            const newTask = {
+              id: task.id,
+              description: task.description,
+              type: task.type,
+              startTime: Date.now()
+            };
+            activeTasksMap.value.set(task.id, newTask);
+            addLog('start', `Task [${task.id}] started...`);
+          }
+          else if (event === 'task:done') {
+            const taskId = data.task ? data.task.id : data.id;
+            activeTasksMap.value.delete(taskId);
+            
+            // Extract tokens if possible
+            const taskTokens = data.result?.code_result?.metrics?.tokens_used || 0;
+            tokens.value += taskTokens;
+            
+            addLog('done', `Task [${taskId}] finished. +${taskTokens} tokens`);
+          }
+          else if (event === 'task:error') {
+            const taskId = data.task ? data.task.id : data.id;
+            activeTasksMap.value.delete(taskId);
+            addLog('error', `Task [${taskId}] failed!`);
+          }
+          else if (event === 'plan:start') {
+            addLog('milestone', 'Generating plan...');
+          }
+        };
+
+        const formatTime = (timestamp) => {
+          const s = Math.floor((Date.now() - timestamp) / 1000);
+          return `${Math.floor(s / 60)}m ${s % 60}s`;
+        };
+
+        onMounted(() => {
+          addLog('review', 'Connecting to AppMaker Engine...');
+          const evtSource = new EventSource('/events');
+
+          evtSource.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              handleEvent(msg.event, msg.data);
+            } catch(err) {}
+          };
+
+          evtSource.onerror = () => {
+             addLog('error', 'Connection lost, retrying...');
+             state.value = 'Disconnected';
+          };
+          
+          // Update durations every second
+          setInterval(() => {
+            // Vue reactivity hack to force re-render if needed
+            activeTasksMap.value = new Map(activeTasksMap.value);
+          }, 1000);
+        });
+
+        const activeTasksArray = computed(() => Array.from(activeTasksMap.value.values()));
+        const sortedLogs = computed(() => logs.value);
+
+        return {
+          state,
+          tokens,
+          currentMilestone,
+          activeTasksArray,
+          sortedLogs,
+          formatTime
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
