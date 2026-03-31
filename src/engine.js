@@ -1,6 +1,13 @@
 /**
  * Execution Engine
  * 执行双 Agent 协作流程：claude-code 编程 + opencode 毒舌点评
+ * 
+ * 核心特性：
+ * - 智能重试机制（网络错误自动重试）
+ * - 任务超时控制（防止无限等待）
+ * - 动态并行调度（根据依赖关系优化并发）
+ * - 资源预算管理（token 消耗追踪）
+ * - 多层次检查点（里程碑 + 手动）
  */
 
 import { AgentDispatcher } from './agents/dispatcher.js';
@@ -16,16 +23,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export class ExecutionEngine extends EventEmitter {
   constructor(config = {}) {
     super();
-    this.config = config;
+    this.config = {
+      max_review_cycles: 3,
+      task_timeout: 300000,
+      max_retries: 2,
+      max_concurrent_tasks: 3,
+      token_budget: 100000,
+      ...config
+    };
+    
     this.tasks = new Map();
     this.checkpoints = [];
     this.logs = [];
-    this.maxReviewCycles = config.max_review_cycles || 3;
+    this.maxReviewCycles = this.config.max_review_cycles;
     this.projectRoot = config.project_root || process.cwd();
+    this.tokenUsage = { total: 0, byAgent: {} };
+    this.halt = false;
+    this.aborted = false;
 
     this.dispatcher = new AgentDispatcher({
       native_reviewer_model: config.native_reviewer_model || 'MiniMax-Text-01',
-      native_coder_model: config.native_coder_model || 'MiniMax-Text-01'
+      native_coder_model: config.native_coder_model || 'MiniMax-Text-01',
+      request_timeout: this.config.task_timeout,
+      max_retries: this.config.max_retries
     });
 
     this.dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
@@ -46,75 +66,207 @@ export class ExecutionEngine extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async execute(plan) {
-    this._log('INFO', `开始执行计划: ${plan.project.name}`);
-    this._log('INFO', `总任务数: ${plan.tasks.length}`);
+    this._log('INFO', `🚀 开始执行计划: ${plan.project.name}`);
+    this._log('INFO', `📋 总任务数: ${plan.tasks.length} | Token 预算: ${this.config.token_budget}`);
 
     const results = [];
     const startTime = Date.now();
 
     for (const milestone of plan.milestones) {
-      this._log('INFO', `\n=== 里程碑: ${milestone.name} ===`);
+      this._log('INFO', `\n${'═'.repeat(50)}`);
+      this._log('INFO', `🏁 里程碑: ${milestone.name}`);
+      this._log('INFO', `${'═'.repeat(50)}`);
       this.emit('milestone:start', { milestone, plan });
 
-      const executionPromises = new Map();
-      const milestoneTasks = milestone.tasks
-        .map(id => plan.tasks.find(t => t.id === id))
-        .filter(t => {
-          if (!t) this._log('WARN', '任务未找到');
-          return Boolean(t);
-        });
-
-      const scheduleTask = async (task) => {
-        const existing = this.tasks.get(task.id);
-        if (existing?.status === 'done') return existing.result;
-
-        if (task.dependencies?.length > 0) {
-          const depResults = await Promise.all(
-            task.dependencies.map(depId => {
-              if (executionPromises.has(depId)) return executionPromises.get(depId);
-              const pastState = this.tasks.get(depId);
-              if (pastState) return Promise.resolve(pastState.result || { status: pastState.status });
-              return Promise.resolve({ status: 'done' });
-            })
-          );
-          if (depResults.some(r => r?.status !== 'done')) {
-            const blockedResult = { task_id: task.id, status: 'blocked' };
-            this.tasks.set(task.id, { status: 'blocked', result: blockedResult });
-            return blockedResult;
-          }
-        }
-
-        if (this.halt) {
-          this._log('WARN', `由于系统风控 (halt)，任务 ${task.id} 被中止执行`);
-          return { status: 'aborted' };
-        }
-
-        const result = await this._executeTask(task, plan);
-        results.push(result);
-        this.tasks.set(task.id, { status: result.status, result });
-        this._reportProgress(task, result);
-        return result;
-      };
-
-      for (const task of milestoneTasks) {
-        executionPromises.set(task.id, scheduleTask(task));
-      }
-
-      await Promise.all(executionPromises.values());
+      const milestoneResults = await this._executeMilestone(milestone, plan);
+      results.push(...milestoneResults);
 
       await this._createCheckpoint(`milestone_${milestone.id}`);
+      this._log('INFO', `✅ 里程碑 "${milestone.name}" 完成`);
       this.emit('milestone:done', { milestone, plan });
+
+      if (this._checkResourceExhausted()) {
+        this._log('WARN', '⚠️ 资源耗尽，停止执行后续里程碑');
+        break;
+      }
     }
 
     const summary = this._generateSummary(results, startTime);
     this.emit('plan:done', { plan, summary, results });
 
+    this._log('INFO', `\n${'═'.repeat(50)}`);
+    this._log('INFO', `📊 执行摘要:`);
+    this._log('INFO', `   成功: ${summary.done} | 失败: ${summary.failed} | 需人工: ${summary.needs_human}`);
+    this._log('INFO', `   Token 消耗: ${this.tokenUsage.total} / ${this.config.token_budget}`);
+    this._log('INFO', `   总耗时: ${Math.round(summary.duration_ms / 1000)}s`);
+    this._log('INFO', `${'═'.repeat(50)}`);
+
     return {
       plan_id: plan.plan_id,
       status: summary.failed > 0 ? 'partial' : 'success',
       results,
-      summary
+      summary,
+      tokenUsage: this.tokenUsage
     };
+  }
+
+  /**
+   * 执行单个里程碑（智能并行调度）
+   * @private
+   */
+  async _executeMilestone(milestone, plan) {
+    const results = [];
+    const milestoneTasks = milestone.tasks
+      .map(id => plan.tasks.find(t => t.id === id))
+      .filter(t => {
+        if (!t) this._log('WARN', `任务 ID ${id} 未找到`);
+        return Boolean(t);
+      });
+
+    const taskGraph = this._buildTaskGraph(milestoneTasks);
+    const maxConcurrent = Math.min(this.config.max_concurrent_tasks, milestoneTasks.length);
+    
+    const executing = new Map();
+    const completed = new Map();
+
+    while (completed.size < milestoneTasks.length) {
+      const availableTasks = this._getAvailableTasks(taskGraph, executing, completed);
+      
+      while (executing.size < maxConcurrent && availableTasks.length > 0 && !this.halt) {
+        const task = availableTasks.shift();
+        this._log('INFO', `[${task.id}] 调度执行 (依赖: ${task.dependencies?.length || 0})`);
+        
+        const promise = this._executeTaskWithTimeout(task, plan)
+          .then(result => {
+            results.push(result);
+            this.tasks.set(task.id, { status: result.status, result });
+            this._reportProgress(task, result);
+            this._trackTokenUsage(result);
+            return result;
+          })
+          .catch(error => {
+            const errorResult = { task_id: task.id, status: 'failed', error: error.message };
+            results.push(errorResult);
+            this.tasks.set(task.id, { status: 'failed', result: errorResult });
+            this._reportProgress(task, errorResult);
+            return errorResult;
+          })
+          .finally(() => executing.delete(task.id));
+
+        executing.set(task.id, promise);
+      }
+
+      if (executing.size > 0) {
+        await Promise.race(executing.values());
+      }
+
+      if (this.halt || this.aborted) {
+        this._log('WARN', '执行被中止，等待运行中的任务完成...');
+        await Promise.allSettled(executing.values());
+        break;
+      }
+
+      if (executing.size === 0 && availableTasks.length === 0 && completed.size < milestoneTasks.length) {
+        const blocked = milestoneTasks.filter(t => !completed.has(t.id) && !executing.has(t.id));
+        if (blocked.length > 0) {
+          this._log('ERROR', `检测到死锁！${blocked.length} 个任务无法完成`);
+          for (const task of blocked) {
+            const errorResult = { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
+            results.push(errorResult);
+            completed.set(task.id, errorResult);
+          }
+        }
+        break;
+      }
+    }
+
+    await Promise.allSettled(executing.values());
+    return results;
+  }
+
+  /**
+   * 构建任务依赖图
+   * @private
+   */
+  _buildTaskGraph(tasks) {
+    const graph = new Map();
+    for (const task of tasks) {
+      graph.set(task.id, {
+        task,
+        dependencies: new Set(task.dependencies || []),
+        dependents: new Set()
+      });
+    }
+    for (const [id, node] of graph) {
+      for (const depId of node.dependencies) {
+        if (graph.has(depId)) {
+          graph.get(depId).dependents.add(id);
+        }
+      }
+    }
+    return graph;
+  }
+
+  /**
+   * 获取可执行的任务（依赖已满足）
+   * @private
+   */
+  _getAvailableTasks(graph, executing, completed) {
+    const available = [];
+    for (const [id, node] of graph) {
+      if (completed.has(id) || executing.has(id)) continue;
+      
+      const depsSatisfied = [...node.dependencies].every(depId => 
+        completed.has(depId) && completed.get(depId)?.status === 'done'
+      );
+      
+      if (depsSatisfied) {
+        available.push(node.task);
+      }
+    }
+    return available;
+  }
+
+  /**
+   * 带超时的任务执行
+   * @private
+   */
+  async _executeTaskWithTimeout(task, plan) {
+    const timeout = this.config.task_timeout;
+    
+    return Promise.race([
+      this._executeTask(task, plan),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`任务执行超时 (${timeout / 1000}s)`)), timeout)
+      )
+    ]);
+  }
+
+  /**
+   * 追踪 token 使用
+   * @private
+   */
+  _trackTokenUsage(result) {
+    const codeTokens = result.code_result?.metrics?.tokens_used || 0;
+    const reviewTokens = result.review_result?.output?.metrics?.tokens_used || 0;
+    
+    this.tokenUsage.total += codeTokens + reviewTokens;
+    this.tokenUsage.byAgent['native-coder'] = (this.tokenUsage.byAgent['native-coder'] || 0) + codeTokens;
+    this.tokenUsage.byAgent['native-reviewer'] = (this.tokenUsage.byAgent['native-reviewer'] || 0) + reviewTokens;
+
+    if (this.tokenUsage.total > this.config.token_budget) {
+      this._log('WARN', `⚠️ Token 消耗超出预算 (${this.tokenUsage.total} > ${this.config.token_budget})`);
+      this.halt = true;
+      this.emit('budget:exceeded', { usage: this.tokenUsage, budget: this.config.token_budget });
+    }
+  }
+
+  /**
+   * 检查资源是否耗尽
+   * @private
+   */
+  _checkResourceExhausted() {
+    return this.halt || this.tokenUsage.total > this.config.token_budget;
   }
 
   /**
@@ -130,113 +282,205 @@ export class ExecutionEngine extends EventEmitter {
     let reviewResult;
     let cycle = 0;
 
-    // 阶段 1: native-coder 编程
-    this._log('INFO', `[${task.id}] native-coder 编程中...`);
-    try {
-      codeResult = await this.dispatcher.dispatch({
-        id: task.id,
-        type: task.type || 'create',
-        description: task.description,
-        files: task.files || [],
-        context
-      });
-    } catch (error) {
-      this._log('ERROR', `[${task.id}] native-coder 执行失败: ${error.message}`);
-      return { task_id: task.id, status: 'failed', phase: 'code', error: error.message };
-    }
+    codeResult = await this._executeWithRetry(
+      async () => {
+        this._log('INFO', `[${task.id}] 🤖 native-coder 编程中...`);
+        return this.dispatcher.dispatch({
+          id: task.id,
+          type: task.type || 'create',
+          description: task.description,
+          files: task.files || [],
+          context
+        });
+      },
+      {
+        maxRetries: this.config.max_retries,
+        taskId: task.id,
+        phase: 'code'
+      }
+    );
 
-    if (codeResult.status === 'failed' || codeResult.success === false) {
-      this._log('ERROR', `[${task.id}] native-coder 执行失败`);
-      const errRes = { task_id: task.id, status: 'failed', phase: 'code', error: codeResult.error || codeResult.errors || 'Unknown error' };
+    if (!codeResult || codeResult.status === 'failed' || codeResult.success === false) {
+      const errorMsg = codeResult?.error || codeResult?.errors || 'Unknown error';
+      this._log('ERROR', `[${task.id}] ❌ native-coder 执行失败: ${errorMsg}`);
+      const errRes = { task_id: task.id, status: 'failed', phase: 'code', error: errorMsg };
       this.emit('task:error', { task, result: errRes });
       return errRes;
     }
 
-    if (!codeResult.output?.files_created?.length && !codeResult.output?.files_modified?.length) {
-      this._log('WARN', `[${task.id}] native-coder 本次执行没有生成或修改任何文件。`);
+    const filesCreated = (codeResult.output?.files_created?.length || 0) + (codeResult.output?.files_modified?.length || 0);
+    if (filesCreated === 0) {
+      this._log('WARN', `[${task.id}] ⚠️ native-coder 本次执行没有生成或修改任何文件`);
     } else {
-      this._log('INFO', `[${task.id}] 编程完成，文件: ${(codeResult.output?.files_created?.length || 0) + (codeResult.output?.files_modified?.length || 0)}`);
+      this._log('INFO', `[${task.id}] ✅ 编程完成，文件: ${filesCreated}`);
     }
 
-    // 阶段 2: native-reviewer 代码审查
-    this._log('INFO', `[${task.id}] native-reviewer 审查代码中...`);
-    try {
+    reviewResult = await this._executeWithRetry(
+      async () => {
+        this._log('INFO', `[${task.id}] 🔍 native-reviewer 审查代码中...`);
+        return this.dispatcher.dispatch({
+          id: `review_${task.id}`,
+          type: 'review',
+          description: `评审任务: ${task.description}`,
+          files: codeResult.output?.files_created || [],
+          context
+        });
+      },
+      {
+        maxRetries: this.config.max_retries,
+        taskId: task.id,
+        phase: 'review'
+      }
+    );
+
+    this.emit('task:review', { task, result: reviewResult });
+
+    if (!reviewResult) {
+      this._log('ERROR', `[${task.id}] ❌ native-reviewer 评审失败`);
+      return { task_id: task.id, status: 'failed', phase: 'review', error: 'Review agent failed' };
+    }
+
+    const reviewScore = reviewResult.output?.score ?? 100;
+    const reviewIssues = reviewResult.output?.issues || [];
+    const reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
+    const REVIEW_THRESHOLD = 85;
+    const needsFix = reviewScore < REVIEW_THRESHOLD;
+
+    while (needsFix && cycle < this.maxReviewCycles) {
+      cycle++;
+      this._log('WARN', `[${task.id}] 🔄 评审 FAIL (第 ${cycle} 次修正)`);
+      this._logIssues(reviewIssues);
+
+      const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult, reviewComments);
+
+      codeResult = await this._executeWithRetry(
+        async () => {
+          return this.dispatcher.dispatch({
+            id: `${task.id}_fix_${cycle}`,
+            type: 'modify',
+            description: fixPrompt,
+            files: codeResult.output?.files_created || [],
+            context
+          });
+        },
+        {
+          maxRetries: this.config.max_retries,
+          taskId: task.id,
+          phase: 'fix'
+        }
+      );
+
+      if (!codeResult) {
+        this._log('ERROR', `[${task.id}] ❌ 修正失败`);
+        return { task_id: task.id, status: 'failed', phase: 'fix', cycle, error: 'Fix iteration failed' };
+      }
+
       reviewResult = await this.dispatcher.dispatch({
-        id: `review_${task.id}`,
+        id: `review_${task.id}_${cycle}`,
         type: 'review',
-        description: `评审任务: ${task.description}`,
+        description: `重新评审: ${task.description}`,
         files: codeResult.output?.files_created || [],
         context
       });
-      this.emit('task:review', { task, result: reviewResult });
-    } catch (error) {
-      this._log('ERROR', `[${task.id}] native-reviewer 评审失败: ${error.message}`);
-      return { task_id: task.id, status: 'failed', phase: 'review', error: error.message };
-    }
 
-    // 阶段 3: 修正循环
-    while (reviewResult.output?.verdict === 'FAIL' && cycle < this.maxReviewCycles) {
-      cycle++;
-      this._log('WARN', `[${task.id}] 评审 FAIL (第 ${cycle} 次修正)`);
-
-      const issues = reviewResult.output?.issues || [];
-      this._logIssues(issues);
-
-      const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult);
-
-      try {
-        codeResult = await this.dispatcher.dispatch({
-          id: `${task.id}_fix_${cycle}`,
-          type: 'modify',
-          description: fixPrompt,
-          files: codeResult.output?.files_created || [],
-          context
-        });
-      } catch (error) {
-        this._log('ERROR', `[${task.id}] 修正失败: ${error.message}`);
-        return { task_id: task.id, status: 'failed', phase: 'fix', cycle, error: error.message };
+      if (!reviewResult) {
+        this._log('ERROR', `[${task.id}] ❌ 重新评审失败`);
+        return { task_id: task.id, status: 'failed', phase: 're-review', cycle, error: 'Re-review failed' };
       }
 
-      try {
-        reviewResult = await this.dispatcher.dispatch({
-          id: `review_${task.id}_${cycle}`,
-          type: 'review',
-          description: `重新评审: ${task.description}`,
-          files: codeResult.output?.files_created || [],
-          context
-        });
-      } catch (error) {
-        this._log('ERROR', `[${task.id}] 重新评审失败`);
-        return { task_id: task.id, status: 'failed', phase: 're-review', cycle, error: error.message };
+      const newScore = reviewResult.output?.score ?? 100;
+      if (newScore >= REVIEW_THRESHOLD) {
+        this._log('INFO', `[${task.id}] ✅ 修正后评分提升至 ${newScore}`);
+        break;
       }
     }
 
-    // 结果判定
-    if (reviewResult.output?.verdict === 'FAIL' && cycle >= this.maxReviewCycles) {
-      this._log('ERROR', `[${task.id}] 超过最大修正次数，人工介入`);
+    if (needsFix && cycle >= this.maxReviewCycles) {
+      this._log('ERROR', `[${task.id}] ⚠️ 超过最大修正次数 (${this.maxReviewCycles})，需人工介入`);
+      this._log('WARN', `[${task.id}] 最终评分: ${reviewScore}`);
       return {
         task_id: task.id,
         status: 'needs_human',
         phase: 'exhausted',
         cycles: cycle,
-        issues: reviewResult.output?.issues,
+        score: reviewScore,
+        issues: reviewIssues,
+        comments: reviewComments,
         code_result: codeResult
       };
     }
 
-    this._log('INFO', `[${task.id}] ✓ PASS (评分: ${reviewResult.output?.score || 0})`);
+    const verdict = reviewScore >= REVIEW_THRESHOLD ? 'PASS' : 'FAIL';
+    const verdictIcon = verdict === 'PASS' ? '✅' : '❌';
+    this._log('INFO', `[${task.id}] ${verdictIcon} ${verdict} (评分: ${reviewScore})`);
 
     const finalResult = {
       task_id: task.id,
       status: 'done',
-      verdict: reviewResult.output?.verdict,
-      score: reviewResult.output?.score,
+      verdict,
+      score: reviewScore,
       cycles: cycle,
       code_result: codeResult,
       review_result: reviewResult
     };
     this.emit('task:done', { task, result: finalResult });
     return finalResult;
+  }
+
+  /**
+   * 带重试的执行包装器
+   * @private
+   */
+  async _executeWithRetry(fn, options = {}) {
+    const { maxRetries = 2, taskId, phase } = options;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        
+        if (this._isRetryableError(error)) {
+          if (attempt <= maxRetries) {
+            const delay = Math.pow(2, attempt - 1) * 1000;
+            this._log('WARN', `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${error.message}`);
+            await this._sleep(delay);
+          } else {
+            this._log('ERROR', `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败`);
+            return null;
+          }
+        } else {
+          this._log('ERROR', `[${taskId}] ❌ ${phase} 非重试性错误: ${error.message}`);
+          return null;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 判断错误是否可重试
+   * @private
+   */
+  _isRetryableError(error) {
+    const retryablePatterns = [
+      'timeout', 'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
+      'network', 'rate limit', '429', '503', '502',
+      'socket hang up', 'Request timeout'
+    ];
+    
+    const errorMsg = (error?.message || '').toLowerCase();
+    return retryablePatterns.some(pattern => errorMsg.includes(pattern.toLowerCase()));
+  }
+
+  /**
+   * 睡眠工具
+   * @private
+   */
+  _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async _buildContext(task, plan) {
@@ -258,11 +502,23 @@ export class ExecutionEngine extends EventEmitter {
     }
   }
 
-  _buildFixPrompt(task, codeResult, reviewResult) {
+  _buildFixPrompt(task, codeResult, reviewResult, reviewComments) {
     const issues = reviewResult.output?.issues || [];
-    const issueList = issues.map((issue, i) =>
-      `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file}\n   问题: ${issue.reason}\n   建议: ${issue.suggestion}`
-    ).join('\n');
+    let issueList;
+
+    if (issues.length > 0 && typeof issues[0] === 'string') {
+      issueList = issues.map((issue, i) =>
+        `${i + 1}. [待修复] ${issue}`
+      ).join('\n');
+    } else {
+      issueList = issues.map((issue, i) =>
+        `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file}\n   问题: ${issue.reason}\n   建议: ${issue.suggestion}`
+      ).join('\n');
+    }
+
+    if (!issueList) {
+      issueList = `评审意见: ${reviewComments || '评分过低 (score < 60)'}`;
+    }
 
     return `修正以下代码中的问题：
 
@@ -270,6 +526,8 @@ export class ExecutionEngine extends EventEmitter {
 
 需修正的问题:
 ${issueList}
+
+${reviewComments ? `评审原话: "${reviewComments}"` : ''}
 
 请根据以上问题修改代码，确保：
 1. 所有 CRITICAL 问题必须修复
@@ -281,8 +539,12 @@ ${issueList}
 
   _logIssues(issues) {
     for (const issue of issues) {
-      const icon = issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : '🟢';
-      this._log('WARN', `  ${icon} ${issue.title} (${issue.file})`);
+      if (typeof issue === 'string') {
+        this._log('WARN', `  🟡 ${issue}`);
+      } else {
+        const icon = issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : '🟢';
+        this._log('WARN', `  ${icon} ${issue.title} (${issue.file || 'unknown'})`);
+      }
     }
   }
 

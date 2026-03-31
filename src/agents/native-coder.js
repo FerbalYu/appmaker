@@ -28,9 +28,15 @@ export class NativeCoderAdapter extends AgentAdapter {
          throw new Error('API Key missing. Please set OPENAI_API_KEY or MINIMAX_API_KEY for native-coder');
       }
 
-      const systemPrompt = `你是一个资深的 AI 全栈工程师，负责根据需求编写代码。
-目前你工作在全自动环境，必须输出一段严格符合要求的纯 JSON。
-不包含任何 Markdown 代码块标签(\`\`\`json)或额外说明！必须是可直接反序列化的内容。
+      const systemPrompt = `你是一个资深的 AI 全栈工程师，负责根据需求编写高质量代码。
+你工作在全自动环境，输出的代码必须能通过严格的代码审查（评审阈值 85 分）。
+
+重要原则：
+1. 错误处理 - 所有可能失败的操作必须 try-catch，错误要记录和报告
+2. 输入验证 - 验证所有外部输入，不信任任何用户数据
+3. 安全性 - 防止 XSS、SQL 注入、命令注入等安全漏洞
+4. 代码可读性 - 使用有意义的变量名，添加必要注释
+5. 完整性 - 不要留 TODO，确保功能完整可运行
 
 输出格式要求：
 {
@@ -43,8 +49,15 @@ export class NativeCoderAdapter extends AgentAdapter {
     }
   ]
 }
-附注：path 必须是基于项目根目录的相对路径。如果你需要修改多个文件，请在 files 数组中放置多个对象。
-不要忽略必要的前端结构或依赖逻辑。`;
+
+要求：
+- path 必须是基于项目根目录的相对路径
+- 如果需要修改多个文件，请在 files 数组中放置多个对象
+- 代码必须完整可运行，不要省略任何部分
+- 不要包含 TODO、console.log、debugger 等调试代码
+- 必须包含适当的错误处理和日志记录
+
+不包含任何 Markdown 代码块标签(\`\`\`json)或额外说明！必须是可直接反序列化的纯 JSON。`;
 
       // 提取项目根目录（如果存在）增强上下文
       let contextStr = "空目录";

@@ -6,7 +6,7 @@
 
 | 条件 | 阈值 | 严重程度 | 处理 |
 |------|------|----------|------|
-| 质量检查失败 | > 3 次 | 🔴 高 | 触发自我修正 |
+| 质量检查失败 | score < 60 | 🔴 高 | 触发自我修正 |
 | 任务超时 | > 2x 预估时间 | 🟡 中 | 分析原因，决定重试或跳过 |
 | 错误累积 | > 5 个 | 🔴 高 | 触发自我修正 |
 | 资源消耗 | > 80% 预算 | 🟡 中 | 优化或申请更多资源 |
@@ -15,68 +15,76 @@
 
 ## 修正类型
 
-### 类型 1：简单错误修正
+### 类型 1：Agent 修正 (agent_fix)
 
-**适用**：单一任务失败，原因明确
+**适用**：质量问题、代码 bug
 
 ```
-触发条件：单次验证失败 < 3 次
-处理方式：Agent 自我修正
+触发条件：评审 score < 60
+处理方式：调用修正 Agent
 流程：
-  1. 分析错误信息
-  2. Agent 尝试修复
-  3. 重新验证
+  1. 构建修正提示词
+  2. 调用 native-coder 修正代码
+  3. 重新评审
   4. 记录修正历史
 ```
 
-### 类型 2：架构问题修正
+### 类型 2：重试修正 (retry)
 
-**适用**：架构违规、设计问题
+**适用**：网络错误、超时、临时故障
 
 ```
-触发条件：architecture.rules 违规
-处理方式：重新分析架构
+触发条件：网络或超时错误
+处理方式：延迟重试
 流程：
-  1. 暂停当前任务
-  2. 重新审视架构设计
-  3. 制定修正方案
-  4. 逐步修正（不影响已完成部分）
-  5. 验证修正效果
+  1. 分析错误类型
+  2. 延迟后重试（最多 3 次）
+  3. 指数退避策略
+  4. 记录失败历史
 ```
 
-### 类型 3：资源问题修正
+### 类型 3：优化重试 (optimize_and_retry)
 
-**适用**：Token 超限、时间超限
+**适用**：执行超时
 
 ```
-触发条件：资源消耗 > 80% 预算
-处理方式：优化或降级
+触发条件：执行超时
+处理方式：优化代码后重试
 流程：
-  1. 分析资源消耗分布
-  2. 识别高消耗点
-  3. 优化方案：
-     - 减少不必要调用
-     - 简化实现方式
-     - 合并小任务
-  4. 继续执行
+  1. 分析超时原因
+  2. 优化代码（减少计算、添加缓存）
+  3. 重新执行
+  4. 验证性能改善
 ```
 
-### 类型 4：计划偏差修正
+### 类型 4：人工介入 (human_intervention)
 
-**适用**：进度严重滞后
+**适用**：安全问题、架构违规、资源耗尽
 
 ```
-触发条件：完成率 < 80% 预期
-处理方式：重新规划
+触发条件：security_vuln / architecture_violation / resource_exhausted
+处理方式：标记需要人工处理
 流程：
-  1. 分析滞后原因
-  2. 重新评估任务复杂度
-  3. 调整计划：
-     - 延长时间线，或
-     - 缩减范围（延后次要功能）
-  4. 更新里程碑
-  5. 继续执行
+  1. 记录问题详情
+  2. 创建检查点
+  3. 标记任务状态为 needs_human
+  4. 继续其他任务
 ```
+
+## 问题类型检测
+
+SelfCorrector 自动检测以下问题类型：
+
+| 问题类型 | 检测关键词 | 严重程度 | 处理策略 |
+|----------|------------|----------|----------|
+| quality_issue | 评审 score < 60 | 🟡 | agent_fix |
+| network_or_timeout | network, timeout, econnrefused | 🟡 | retry |
+| architecture_violation | architecture, design | 🔴 | human_intervention |
+| security_vuln | security, injection, xss | 🔴 | human_intervention |
+| resource_exhausted | token, quota, rate limit | 🔴 | human_intervention |
+| syntax_error | syntax, parse | 🔴 | agent_fix |
+| execution_timeout | timeout | 🟡 | optimize_and_retry |
+| code_bug | 其他错误 | 🟡 | agent_fix |
 
 ## 修正流程
 
@@ -193,3 +201,92 @@ const CAN_SELF_CORRECT = [
 | 修正时间 | < 原任务预估时间 |
 | 引入新问题 | 0 |
 | 重复犯错 | 0 |
+
+## API 接口
+
+### SelfCorrector 类
+
+```javascript
+import { SelfCorrector } from './corrector.js';
+
+const corrector = new SelfCorrector(engine);
+```
+
+### correct(triggerReason, context)
+
+主修正方法，根据触发原因执行相应的修正策略。
+
+```javascript
+const result = await corrector.correct('quality_low', {
+  task: { id: 't1', description: '实现登录功能' },
+  score: 45,
+  issues: [
+    { severity: 'CRITICAL', title: 'XSS漏洞', file: 'login.js', reason: '未转义用户输入', suggestion: '使用 htmlspecialchars' }
+  ]
+});
+
+console.log(result);
+// {
+//   success: true,
+//   action: 'agent_fix',
+//   cause: { type: 'quality_issue', message: 'Score too low: 45', severity: '🟡' },
+//   result: { status: 'fix_completed', files_created: ['login.js'] },
+//   timestamp: '2026-04-01T12:00:00.000Z'
+// }
+```
+
+### correctTask(taskId, issues, context)
+
+快捷方法，用于修正指定任务。
+
+```javascript
+const result = await corrector.correctTask('t1', [
+  '缺少错误处理',
+  '变量命名不规范'
+], { score: 50 });
+```
+
+### handleExecutionError(error, taskId, context)
+
+处理执行错误。
+
+```javascript
+try {
+  await someOperation();
+} catch (error) {
+  const result = await corrector.handleExecutionError(error, 't1', {
+    description: '数据库查询'
+  });
+}
+```
+
+## 修正结果结构
+
+```typescript
+interface CorrectionResult {
+  success: boolean;           // 修正是否成功
+  action: string;             // 修正动作: 'agent_fix' | 'retry' | 'optimize_and_retry' | 'human_intervention'
+  cause: {
+    type: string;              // 问题类型
+    message: string;           // 问题描述
+    severity: string;          // 严重程度: '🟢' | '🟡' | '🔴'
+    details?: object;          // 额外详情
+  };
+  result: {
+    status: string;            // 执行状态
+    files_created?: string[];  // 创建的文件
+    files_modified?: string[]; // 修改的文件
+    error?: string;            // 错误信息（如有）
+  };
+  timestamp: string;           // 时间戳
+}
+```
+
+## 修正日志
+
+修正记录保存在 `corrections.log` 文件中：
+
+```
+[INFO] 修正记录 [corr_1774975841865] - 任务: t1 | 触发: quality_low | 问题: Score too low: 50 (quality_issue) | 动作: fix_dispatched | 验证: 成功
+[ERROR] Correction unresolved, requires human intervention for task: t3 (security_vuln)
+```

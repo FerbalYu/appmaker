@@ -103,30 +103,65 @@ async function main() {
     switch (command) {
       case 'health':
       case '--health':
+      case 'h':
         await cmdHealth();
         break;
 
       case 'plan':
       case '--plan':
+      case 'p':
         await cmdPlan(args[1]);
         break;
 
       case 'execute':
       case '--execute':
+      case 'e':
         await cmdExecute(args[1]);
         break;
 
       case 'run':
       case '--run':
+      case 'r':
         await cmdRun(args[1]);
         break;
 
       case 'daemon':
+      case 'd':
         await cmdDaemonStatus();
         break;
 
-      default:
+      case 'status':
+      case 's':
+        await cmdStatus();
+        break;
+
+      case 'logs':
+      case 'l':
+        await cmdLogs(args[1]);
+        break;
+
+      case 'config':
+      case 'c':
+        await cmdConfig(args[1], args[2]);
+        break;
+
+      case 'help':
+      case '--help':
+      case '-h':
         showHelp();
+        break;
+
+      case 'version':
+      case 'v':
+        console.log('appMaker v2.0.0');
+        break;
+
+      default:
+        if (command) {
+          console.error(`\x1b[31m未知命令: ${command}\x1b[0m`);
+        }
+        showHelp();
+        process.exit(1);
     }
 
     if (globalDaemon) {
@@ -505,32 +540,197 @@ async function executePlan(plan) {
 
 function showHelp() {
   console.log(`
-用法: bun cli.js <command> [参数]
+╔════════════════════════════════════════════════════════════════╗
+║                    appMaker CLI v2.0.0                        ║
+║              AI 驱动的 APP 开发系统                            ║
+╚════════════════════════════════════════════════════════════════╝
 
-命令:
-  health                 检查 Agent 可用性
-  plan "需求描述"       生成执行计划（保存到 plans/）
-  execute <plan.json>   执行计划文件
-  run "需求描述"        生成计划并自动执行（推荐）
-  daemon                 查看守护进程状态
+📖 用法:
+   bun cli.js <command> [options]
 
-选项:
-  --dir <路径>           指定工作目录（默认: 当前目录）
-  --no-daemon            禁用守护进程模式
-  --yes, -y              自动确认执行
+🎯 可用命令:
+   health (h)          检查 Agent 可用性
+   plan (p) <需求>     生成执行计划
+   execute (e) <计划>  执行计划文件
+   run (r) <需求>      一键生成计划并执行（推荐）
+   daemon (d)          查看守护进程状态
+   status (s)          查看当前执行状态
+   logs (l) [类型]     查看日志 (execution|quality|corrections)
+   config (c) [key]    查看/修改配置
+   version (v)         显示版本信息
+   help (h)            显示帮助信息
 
-示例:
-  bun cli.js health
-  bun cli.js plan "做一个博客系统，支持文章和评论"
-  bun cli.js run "做一个博客系统"
-  bun cli.js run "做一个博客系统" --yes
-  bun cli.js daemon --dir ./my-project
+⚙️ 选项:
+   --dir <路径>        指定工作目录
+   --no-daemon         禁用守护进程
+   --yes               自动确认执行
 
-守护进程:
-  执行任务时会自动启动守护进程，任务信息会被记录到记忆中。
-  守护进程会在后台持续运行，记录项目的学习进度和执行历史。
-  使用 "bun cli.js daemon" 可查看守护进程状态。
+📚 示例:
+   bun cli.js h
+   bun cli.js p "创建一个博客系统"
+   bun cli.js r "创建一个博客系统" --dir ./my-project
+   bun cli.js e plans/plan.json --dir ./my-project
+   bun cli.js s --dir ./my-project
+   bun cli.js l errors --dir ./my-project
+   bun cli.js c token_budget
+
+💡 提示:
+   - 使用短命令可以加快输入速度
+   - --dir 参数可以避免在主目录工作
+   - --yes 可以用于自动化脚本
 `);
+}
+
+async function cmdStatus() {
+  console.log('\n📊 执行状态概览:\n');
+  
+  try {
+    const stateFile = path.join(daemonDataDir, 'state.json');
+    const state = JSON.parse(await fs.readFile(stateFile, 'utf-8'));
+    
+    console.log('守护进程状态:');
+    console.log('  状态:', state.state);
+    console.log('  PID:', state.pid);
+    console.log('  运行时长:', Math.floor((Date.now() - state.startTime) / 1000) + 's');
+    console.log('  已处理任务:', state.stats?.tasksProcessed || 0);
+    console.log('  会话总数:', state.stats?.sessionsCreated || 0);
+    console.log();
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log('守护进程未运行\n');
+    } else {
+      console.error('读取状态失败:', error.message);
+    }
+  }
+
+  const appMakerDir = path.join(executeDir, '.appmaker');
+  const checkpointsDir = path.join(appMakerDir, 'checkpoints');
+  
+  try {
+    const checkpoints = await fs.readdir(checkpointsDir);
+    const latestCp = checkpoints
+      .filter(f => f.endsWith('.json'))
+      .sort()
+      .pop();
+    
+    if (latestCp) {
+      const cpData = JSON.parse(
+        await fs.readFile(path.join(checkpointsDir, latestCp), 'utf-8')
+      );
+      console.log('最新检查点:');
+      console.log('  ID:', cpData.id);
+      console.log('  名称:', cpData.name);
+      console.log('  时间:', new Date(cpData.timestamp).toLocaleString());
+      console.log('  任务数:', Object.keys(cpData.tasks || {}).length);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('读取检查点失败:', error.message);
+    }
+  }
+
+  const logsDir = path.join(appMakerDir, 'logs');
+  if (daemonMode && globalDaemon) {
+    const memory = globalDaemon.getMemory();
+    if (memory) {
+      const memStats = memory.getStats();
+      console.log('\n🧠 记忆统计:');
+      console.log('  总记忆数:', memStats.totalMemories);
+      console.log('  读取次数:', memStats.reads);
+      console.log('  写入次数:', memStats.writes);
+    }
+
+    const sessions = globalDaemon.getSessions();
+    if (sessions) {
+      const allSessions = sessions.list();
+      console.log('\n📝 最近会话:', allSessions.length);
+      for (const s of allSessions.slice(-3)) {
+        console.log(`   - ${s.name} [${s.state}]`);
+      }
+    }
+  }
+  
+  console.log();
+}
+
+async function cmdLogs(type = 'execution') {
+  const logsDir = path.join(executeDir, '.appmaker', 'logs', type);
+  
+  try {
+    const files = await fs.readdir(logsDir);
+    const logFiles = files.filter(f => f.endsWith('.log') || f.endsWith('.md'));
+    
+    if (logFiles.length === 0) {
+      console.log(`\n没有找到 ${type} 类型的日志\n`);
+      return;
+    }
+
+    const tail = args.includes('--tail') ? parseInt(args[args.indexOf('--tail') + 1]) || 20 : 20;
+    const latestFiles = logFiles.sort().slice(-3);
+
+    console.log(`\n📋 ${type} 日志 (最新 ${latestFiles.length} 个文件，显示最后 ${tail} 行):\n`);
+    
+    for (const file of latestFiles) {
+      const content = await fs.readFile(path.join(logsDir, file), 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim());
+      const tailLines = lines.slice(-tail);
+      
+      console.log(`--- ${file} ---`);
+      console.log(tailLines.join('\n'));
+      console.log();
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log(`\n日志目录不存在: ${logsDir}\n`);
+    } else {
+      console.error('读取日志失败:', error.message);
+    }
+  }
+}
+
+async function cmdConfig(key, value) {
+  console.log('\n⚙️  配置信息:\n');
+  
+  const defaultConfig = {
+    'max_review_cycles': 3,
+    'task_timeout': 300000,
+    'max_retries': 2,
+    'max_concurrent_tasks': 3,
+    'token_budget': 100000,
+    'heartbeat_interval': 30000
+  };
+
+  if (!key) {
+    console.log('当前配置:');
+    for (const [k, v] of Object.entries(defaultConfig)) {
+      console.log(`  ${k}: ${v}`);
+    }
+    console.log();
+    console.log('使用 "bun cli.js config <key>" 查看单个配置');
+    console.log('示例: bun cli.js config token_budget');
+    return;
+  }
+
+  const configKey = key.toLowerCase();
+  
+  if (value === undefined) {
+    if (defaultConfig[configKey] !== undefined) {
+      console.log(`${configKey}: ${defaultConfig[configKey]}`);
+    } else {
+      console.log(`未找到配置: ${configKey}`);
+      console.log('可用配置:');
+      for (const k of Object.keys(defaultConfig)) {
+        console.log(`  - ${k}`);
+      }
+    }
+  } else {
+    console.log(`\n⚠️  修改配置需要重启守护进程`);
+    console.log(`当前 ${configKey}: ${defaultConfig[configKey]}`);
+    console.log(`建议值: ${value}`);
+    console.log(`\n如需永久修改，请编辑 config/defaults.json`);
+  }
+  
+  console.log();
 }
 
 main();

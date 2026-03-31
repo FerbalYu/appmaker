@@ -28,14 +28,36 @@ export class NativeReviewerAdapter extends AgentAdapter {
       }
 
       const systemPrompt = `你是一个非常严厉的资深代码审查员。
-你的任务是审查由AI刚生成的代码。
-请严格挑出代码中的潜在bug、可维护性问题和不优雅的写法。
+你的任务是审查由 AI 刚生成的代码。
+请严格挑出代码中的潜在 bug、可维护性问题和不优雅的写法。
+
+评分标准：
+- 90-100: 代码质量优秀，无需修改
+- 70-89: 基本合格，有少量可优化项
+- 60-69: 基本可用，需修复一些次要问题
+- 50-59: 不可接受，需修复多个重要问题
+- <50: 严重问题，必须完全重写
+
 输出必须是一段合法的纯 JSON 对象，格式如下：
 {
-  "score": 0到100的分数 (低于60分代表代码不可接受，需要修补),
-  "comments": "你的毒舌审查意见和改进建议",
-  "issues": ["问题1", "问题2"]
+  "score": 0到100的分数,
+  "summary": "总体评价 (一句话)",
+  "issues": [
+    {
+      "severity": "CRITICAL | WARNING | INFO",
+      "title": "问题标题",
+      "file": "相关文件路径",
+      "reason": "为什么这是问题",
+      "suggestion": "具体修改建议"
+    }
+  ]
 }
+
+要求：
+- 至少找到 3 个问题（除非代码确实完美）
+- CRITICAL 必须包含具体代码行号或位置
+- 不要遗漏任何潜在的 bug 或安全问题
+- 如果没有问题，score 设为 100，issues 设为空数组
 不要包含任何 Markdown 标签或额外文字。`;
 
       // 获取需要 review 的文件内容
@@ -59,7 +81,7 @@ export class NativeReviewerAdapter extends AgentAdapter {
          }
       }
 
-      const userPrompt = `项目需求: ${task.description}\n\n请审查以下修改的文件内容:\n${codeToReview}\n\n给出你的JSON审查结果:`;
+      const userPrompt = `项目需求: ${task.description}\n${task.context?.architecture_rules ? `\n项目架构规范:\n${task.context.architecture_rules.substring(0, 500)}...` : ''}\n${task.context?.quality_rules ? `\n质量规范:\n${task.context.quality_rules.substring(0, 500)}...` : ''}\n\n请审查以下修改的文件内容:\n${codeToReview}\n\n请输出严格的 JSON 审查结果，包括评分、总体评价和具体问题列表。`;
 
       const endpoint = this.apiHost.endsWith('/v1') 
           ? `${this.apiHost}/chat/completions` 
@@ -101,7 +123,8 @@ export class NativeReviewerAdapter extends AgentAdapter {
         task_id: task.id,
         success: true,
         score: typeof resultObj.score === 'number' ? resultObj.score : 80,
-        summary: resultObj.comments || '无评价',
+        summary: resultObj.summary || resultObj.comments || '无评价',
+        issues: resultObj.issues || [],
         duration_ms: Date.now() - startTime
       }, startTime);
 
@@ -136,6 +159,7 @@ export class NativeReviewerAdapter extends AgentAdapter {
       output: {
         score: rawResult.score,
         summary: rawResult.summary,
+        issues: rawResult.issues || [],
         tests_run: false
       },
       metrics: {
