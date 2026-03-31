@@ -78,16 +78,16 @@ appMaker/
 
 ```bash
 # 生成计划
-node cli.js plan <需求描述>
+bun cli.js plan <需求描述>
 
 # 执行计划
-node cli.js execute <plan.json>
+bun cli.js execute <plan.json>
 
 # 自动生成并执行
-node cli.js run <需求描述>
+bun cli.js run <需求描述>
 
 # 检查Agent状态
-node cli.js health
+bun cli.js health
 ```
 
 ## 错误处理

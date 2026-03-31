@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "pid": 31760,
+  "state": "terminated",
+  "startTime": 1774976758968,
+  "stats": {
+    "uptime": 2003,
+    "tasksProcessed": 1,
+    "sessionsCreated": 1,
+    "memoryHits": 0,
+    "memoryMisses": 0,
+    "lastHeartbeat": 1774976760971,
+    "restartCount": 0
+  },
+  "timestamp": 1774976761481
+}

@@ -1,0 +1,13 @@
+{
+  "pid": 31760,
+  "state": "running",
+  "uptime": 2003,
+  "memory": {
+    "rss": 166961152,
+    "heapTotal": 2156544,
+    "heapUsed": 1906023,
+    "external": 743479,
+    "arrayBuffers": 0
+  },
+  "timestamp": 1774976760971
+}

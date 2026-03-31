@@ -218,32 +218,52 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
+
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    for (const match of codeBlocks) return match[1].trim();
+    for (const match of codeBlocks) {
+      const extracted = match[1].trim();
+      if (this._isValidJSON(extracted)) return extracted;
+    }
+
     const startObj = output.indexOf('{');
     const endObj = output.lastIndexOf('}');
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
-      return output.substring(startObj, endObj + 1);
+      const candidate = output.substring(startObj, endObj + 1);
+      if (this._isValidJSON(candidate)) return candidate;
     }
-    return output;
+
+    return null;
+  }
+
+  _isValidJSON(str) {
+    if (!str || typeof str !== 'string') return false;
+    const trimmed = str.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   _formatResult(rawResult, startTime) {
+    const output = rawResult.output;
     return {
       task_id: rawResult.task_id || 'unknown',
       agent: this.name,
-      status: rawResult.success ? 'success' : 'failed',
-      output: {
+      status: output ? 'success' : 'failed',
+      output: output ? {
         files_created: [],
         files_modified: [],
         tests_run: false,
-        summary: rawResult.output
-      },
+        summary: output
+      } : null,
       metrics: {
         duration_ms: rawResult.duration_ms || (Date.now() - startTime),
         tokens_used: 0
       },
-      errors: rawResult.errors || []
+      errors: output ? [] : ['Failed to extract valid JSON from AI response']
     };
   }
 }

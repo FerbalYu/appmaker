@@ -69,9 +69,9 @@ ${requirement}
       console.log(`[Planner] AI 大脑高速运转中... (已耗时: ${elapsed}s)`);
     }, 2000);
 
-    try {
-      const plannerAgentName = this.config.planner_agent || 'native-coder';
+    const plannerAgentName = this.config.planner_agent || 'native-coder';
 
+    try {
       const agentResult = await this.dispatcher.dispatch({
         id: 'plan_analysis',
         type: 'analysis',
@@ -96,13 +96,16 @@ ${requirement}
     } catch (e) {
       clearInterval(spinner);
       process.stdout.write('\r' + ' '.repeat(70) + '\r');
+
       console.log(`[Planner] \x1b[33m⚠️ AI 需求分析失败 (${e.message})，回退到规则分析模式...\x1b[0m`);
+
       return this._generateFallbackPlan(requirement);
     }
   }
 
   _extractJSON(output) {
     if (typeof output !== 'string') return JSON.stringify(output);
+    
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     for (const match of codeBlocks) {
       try {
@@ -110,15 +113,44 @@ ${requirement}
         return JSON.stringify(parsed);
       } catch { /* ignore */ }
     }
+    
     const startObj = output.indexOf('{');
     const endObj = output.lastIndexOf('}');
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
       const candidate = output.substring(startObj, endObj + 1);
       try {
-        const parsed = JSON.parse(candidate);
-        return JSON.stringify(parsed);
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        const braceCount = (candidate.match(/[{}]/g) || []).length;
+        if (braceCount > 2) {
+          let depth = 0, validEnd = -1;
+          for (let i = 0; i < candidate.length; i++) {
+            if (candidate[i] === '{') depth++;
+            else if (candidate[i] === '}') {
+              depth--;
+              if (depth === 0) { validEnd = i; break; }
+            }
+          }
+          if (validEnd > 0) {
+            const trimmed = candidate.substring(0, validEnd + 1);
+            try {
+              JSON.parse(trimmed);
+              return trimmed;
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    }
+    
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        JSON.parse(jsonMatch[0]);
+        return jsonMatch[0];
       } catch { /* ignore */ }
     }
+    
     return output;
   }
 
@@ -167,6 +199,20 @@ ${requirement}
     if (lower.includes('api') || lower.includes('接口')) type = 'api';
     if (lower.includes('升级') || lower.includes('update') || lower.includes('优化')) type = 'upgrade';
     if (lower.includes('迁移') || lower.includes('migrate')) type = 'migration';
+
+    const typeNameMap = {
+      blog: 'blogProject',
+      ecommerce: 'shopSystem',
+      forum: 'forum社区',
+      admin: 'adminPanel',
+      api: 'api服务',
+      upgrade: 'upgradeProject',
+      migration: 'migrateProject'
+    };
+
+    if (type !== 'general') {
+      name = typeNameMap[type] || `${type}Project`;
+    }
 
     const features = [];
     if (lower.includes('用户') || lower.includes('登录') || lower.includes('注册')) features.push('用户认证');

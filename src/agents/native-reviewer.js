@@ -50,7 +50,9 @@ export class NativeReviewerAdapter extends AgentAdapter {
                const fullPath = path.join(task.context.project_root, filepath);
                const content = fs.readFileSync(fullPath, 'utf-8');
                fileContents.push(`--- 文件: ${filepath} ---\n${content}\n`);
-            } catch(e) {}
+            } catch(e) {
+              // Ignore individual file read errors
+            }
          }
          if (fileContents.length > 0) {
             codeToReview = fileContents.join('\n');
@@ -119,7 +121,9 @@ export class NativeReviewerAdapter extends AgentAdapter {
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
         try {
             return JSON.parse(textToParse.substring(startObj, endObj + 1));
-        } catch(e) {}
+        } catch(e) {
+          // JSON parse failure handled by fallback
+        }
     }
     return { score: 70, comments: "JSON parse failed, string matching failed.", issues: [] };
   }

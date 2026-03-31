@@ -52,7 +52,9 @@ export class NativeCoderAdapter extends AgentAdapter {
         try {
           const files = fs.readdirSync(task.context.project_root).filter(f => !f.startsWith('.'));
           contextStr = `当前项目一级目录有: ${files.join(', ')}`;
-        } catch(e) {}
+        } catch(e) {
+          // Ignore context read errors
+        }
       }
 
       const userPrompt = `项目需求: ${task.description}\n${contextStr}\n\n请直接输出JSON内容完成代码编写任务：`;
@@ -145,7 +147,9 @@ export class NativeCoderAdapter extends AgentAdapter {
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
         try {
             return JSON.parse(textToParse.substring(startObj, endObj + 1));
-        } catch(e) {}
+        } catch(e) {
+          // JSON parse failure handled by fallback
+        }
     }
     return { summary: "JSON parse failed, raw output captured.", files: [] };
   }
