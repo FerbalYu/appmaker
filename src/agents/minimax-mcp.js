@@ -48,9 +48,9 @@ class MinimaxMCPAdapter extends AgentAdapter {
     super({ ...MINIMAX_MCP_CONFIG, ...config });
     this.apiKey = process.env.MINIMAX_API_KEY || config.api_key;
     this.apiHost = process.env.MINIMAX_API_HOST || config.api_host || 'https://api.minimaxi.com';
-    this.model = config.model || 'MiniMax-M2.7';
-    this.mcpCommand = config.mcp_command || 'uvx';
-    this.mcpArgs = config.mcp_args || ['minimax-coding-plan-mcp', '-y'];
+    this.model =  process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-M2.7';
+    this.mcpCommand = process.env.MINIMAX_MCP_COMMAND || config.mcp_command || 'uvx';
+    this.mcpArgs = process.env.MINIMAX_MCP_ARGS || config.mcp_args || ['minimax-coding-plan-mcp', '-y'];
   }
 
   async healthCheck() {
