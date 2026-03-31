@@ -1,5 +1,10 @@
 {
+  "planner_agent": "minimax-mcp",
   "agents": {
+    "minimax-mcp": {
+      "enabled": true,
+      "description": "搜商 Agent - 负责调研和规划"
+    },
     "claude-code": {
       "enabled": true,
       "description": "编程 Agent - 负责写代码",

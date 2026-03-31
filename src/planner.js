@@ -63,6 +63,14 @@ ${requirement}
   ]
 }`;
 
+    const startTime = Date.now();
+    let tick = 0;
+    const spinner = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      console.log(`[Planner] AI 大脑高速运转中... (已耗时: ${elapsed}s)`);
+      tick++;
+    }, 2000);
+
     try {
       // 1. 调用选定的 AI 分析策略
       const plannerAgentName = this.config.planner_agent || 'claude-code';
@@ -76,6 +84,9 @@ ${requirement}
         context: { project_root: this.projectRoot }
       });
 
+      clearInterval(spinner);
+      process.stdout.write('\r' + ' '.repeat(70) + '\r'); // 清除进度行
+
       // 2. 提取并验证 JSON
       const content = this._extractJSON(
         agentResult.output?.raw_output || 
@@ -87,7 +98,9 @@ ${requirement}
       const parsedPlan = JSON.parse(content);
       return this._finalizePlan(parsedPlan, requirement);
     } catch (e) {
-      console.log(`[Planner] ⚠️ AI 需求分析失败 (${e.message})，回退到规则分析模式...`);
+      clearInterval(spinner);
+      process.stdout.write('\r' + ' '.repeat(70) + '\r');
+      console.log(`[Planner] \x1b[33m⚠️ AI 需求分析失败 (${e.message})，回退到规则分析模式...\x1b[0m`);
       return this._generateFallbackPlan(requirement);
     }
   }

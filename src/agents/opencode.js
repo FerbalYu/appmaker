@@ -132,9 +132,38 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
       let stdoutData = '';
       let stderrData = '';
 
-      const child = spawn(this.cliPath, args, {
+      let isWin = process.platform === 'win32';
+      let cmdToRun = this.cliPath;
+      let finalArgs = [...args];
+      
+      if (isWin) {
+         try {
+           const { execSync } = require('child_process');
+           const fs = require('fs');
+           const path = require('path');
+           const cmdOutput = execSync(`where ${this.cliPath}.cmd 2>NUL`).toString().trim();
+           if (cmdOutput) {
+             const binPath = cmdOutput.split('\n')[0].trim();
+             const content = fs.readFileSync(binPath, 'utf-8');
+             const match = content.match(/"(%dp0%[^"]+\.js)"/i) || content.match(/"(%~dp0[^"]+\.js)"/i);
+             if (match) {
+               const jsScript = match[1].replace(/%~?dp0%?\\?/, path.dirname(binPath) + path.sep);
+               cmdToRun = process.execPath;
+               finalArgs = [jsScript, ...args];
+             } else {
+               cmdToRun = binPath;
+             }
+           } else {
+             cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
+           }
+         } catch(e) {
+           cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
+         }
+      }
+
+      const child = require('child_process').spawn(cmdToRun, finalArgs, {
         cwd: (context && context.project_root) ? context.project_root : process.cwd(),
-        shell: process.platform === 'win32', // Allows .cmd files on Windows to run
+        shell: isWin && cmdToRun !== process.execPath, 
         env: process.env
       });
 
@@ -143,8 +172,27 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
         reject(new Error(`OpenCode CLI execution timeout (${this.timeout}ms)`));
       }, this.timeout);
 
-      child.stdout.on('data', (data) => stdoutData += data.toString());
-      child.stderr.on('data', (data) => stderrData += data.toString());
+      child.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        stdoutData += chunk;
+        const lines = chunk.split('\n');
+        for (let line of lines) {
+           if (line.trim()) {
+              process.stdout.write(`\r\x1b[36m[opencode] ${line.trim()}\x1b[0m\n`);
+           }
+        }
+      });
+
+      child.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        stderrData += chunk;
+        const lines = chunk.split('\n');
+        for (let line of lines) {
+           if (line.trim()) {
+              process.stdout.write(`\r\x1b[31m[opencode err] ${line.trim()}\x1b[0m\n`);
+           }
+        }
+      });
 
       child.on('close', (code) => {
         clearTimeout(timer);
@@ -253,7 +301,7 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
    */
   async healthCheck() {
     try {
-      if (this.useCLI) {
+      if (this.config.use_cli) {
         const { exec } = require('child_process');
         const { promisify } = require('util');
         const execAsync = promisify(exec);

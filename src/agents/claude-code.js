@@ -79,25 +79,44 @@ class ClaudeCodeAdapter extends AgentAdapter {
       '--print',
       prompt
     ];
-
-    if (context.project_root) {
-      args.push('--project', context.project_root);
-    }
-
-    if (context.checkpoint) {
-      args.push('--checkpoint', context.checkpoint);
-    }
-
-    // 对于长时间运行的任务，使用 --noninteractive
-    if (context.noninteractive !== false) {
-      args.push('--noninteractive');
-    }
+    
+    // claude 不支持 --project, --checkpoint 和 --noninteractive
 
     return new Promise((resolve, reject) => {
+      let isWin = process.platform === 'win32';
+      let cmdToRun = this.cliPath;
+      let finalArgs = [...args];
+      
+      if (isWin) {
+         try {
+           const { execSync } = require('child_process');
+           const fs = require('fs');
+           const path = require('path');
+           const cmdOutput = execSync(`where ${this.cliPath}.cmd 2>NUL`).toString().trim();
+           if (cmdOutput) {
+             const binPath = cmdOutput.split('\n')[0].trim();
+             const content = fs.readFileSync(binPath, 'utf-8');
+             const match = content.match(/"(%dp0%[^"]+\.js)"/i) || content.match(/"(%~dp0[^"]+\.js)"/i);
+             if (match) {
+               const jsScript = match[1].replace(/%~?dp0%?\\?/, path.dirname(binPath) + path.sep);
+               cmdToRun = process.execPath;
+               finalArgs = [jsScript, ...args];
+             } else {
+               cmdToRun = binPath;
+             }
+           } else {
+             cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
+           }
+         } catch(e) {
+           cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
+         }
+      }
+
       // 绕过嵌套检查：在 Claude Code 内运行时需要
-      const child = spawn(this.cliPath, args, {
+      const child = require('child_process').spawn(cmdToRun, finalArgs, {
+        cwd: context.project_root || process.cwd(),
         timeout: this.timeout,
-        shell: true,
+        shell: isWin && cmdToRun !== process.execPath,
         env: { ...process.env, CLAUDECODE: '' }
       });
 
@@ -105,11 +124,25 @@ class ClaudeCodeAdapter extends AgentAdapter {
       let stderr = '';
 
       child.stdout.on('data', (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        const lines = chunk.split('\n');
+        for (let line of lines) {
+           if (line.trim()) {
+              process.stdout.write(`\r\x1b[90m[claude] ${line.trim()}\x1b[0m\n`);
+           }
+        }
       });
 
       child.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        stderr += chunk;
+        const lines = chunk.split('\n');
+        for (let line of lines) {
+           if (line.trim()) {
+              process.stdout.write(`\r\x1b[31m[claude err] ${line.trim()}\x1b[0m\n`);
+           }
+        }
       });
 
       child.on('close', (code) => {

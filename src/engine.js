@@ -33,13 +33,13 @@ class ExecutionEngine extends EventEmitter {
       use_cli: config.opencode_use_cli ?? true,
       cli_path: config.opencode_cli_path || 'opencode',
       api_endpoint: config.opencode_api_endpoint || 'http://localhost:3000',
-      timeout: config.opencode_timeout || 120000
+      timeout: config.opencode_timeout || 300000 // 5 分钟
     }));
     this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
       use_cli: config.claude_code_use_cli ?? true,
       cli_path: config.claude_code_cli_path || 'claude',
       api_endpoint: config.claude_code_api_endpoint || 'http://localhost:8080',
-      timeout: config.claude_code_timeout || 300000,
+      timeout: config.claude_code_timeout || 900000, // 15 分钟
       model: config.claude_model || 'claude-opus-4-6'
     }));
   }

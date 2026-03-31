@@ -37,3 +37,4 @@ coverage/
 .opclog/*
 .appmaker/
 *.bak
+plan_*
