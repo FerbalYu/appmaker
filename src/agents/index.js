@@ -10,15 +10,7 @@ const { AgentDispatcher, TASK_TYPE_MAPPING } = require('./dispatcher');
 const { ExecutionEngine } = require('../engine');
 const { Planner } = require('../planner');
 
-// 加载配置
-const fs = require('fs');
-const path = require('path');
-
-let config = {};
-const configPath = path.join(__dirname, '..', '..', 'config', 'agents.json');
-if (fs.existsSync(configPath)) {
-  config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-}
+const { config } = require('../../config');
 
 /**
  * 创建 Agent Dispatcher 实例
@@ -28,11 +20,23 @@ if (fs.existsSync(configPath)) {
 function createDispatcher(overrideConfig = {}) {
   const finalConfig = {
     ...config.dispatcher,
-    ...config.agents?.opencode,
-    ...config.agents?.claude_code,
+    ...(config.agents?.opencode || {}),
+    ...(config.agents?.['claude-code'] || {}),
     ...overrideConfig
   };
-  return new AgentDispatcher(finalConfig);
+  const dispatcher = new AgentDispatcher(finalConfig);
+
+  // 注册内置 Agent
+  dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
+    ...config.agents?.['claude-code'],
+    ...overrideConfig
+  }));
+  dispatcher.registerAgent('opencode', new OpenCodeAdapter({
+    ...config.agents?.opencode,
+    ...overrideConfig
+  }));
+
+  return dispatcher;
 }
 
 /**

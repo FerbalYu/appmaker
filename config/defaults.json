@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "claude-code": {
+      "use_cli": true,
+      "cli_path": "claude",
+      "api_endpoint": "http://localhost:8080",
+      "timeout_ms": 300000,
+      "max_retries": 3,
+      "model": "claude-opus-4-6"
+    },
+    "opencode": {
+      "use_cli": true,
+      "cli_path": "opencode",
+      "api_endpoint": "http://localhost:3000",
+      "timeout_ms": 60000
+    }
+  },
+  "dispatcher": {
+    "max_concurrent_agents": 3,
+    "default_agent": "claude-code"
+  },
+  "engine": {
+    "max_review_cycles": 3
+  }
+}

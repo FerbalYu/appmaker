@@ -121,29 +121,62 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
    * @private
    */
   async _reviewViaCLI(prompt, context) {
-    const { exec } = require('child_process');
-    const { promisify } = require('util');
-    const execAsync = promisify(exec);
-
-    let cmd = `${this.cliPath} "${prompt.replace(/"/g, '\\"')}"`;
+    const { spawn } = require('child_process');
+    const args = [prompt];
 
     if (context && context.project_root) {
-      cmd += ` --project "${context.project_root}"`;
+      args.push('--project', context.project_root);
     }
 
-    const { stdout, stderr } = await execAsync(cmd, { timeout: this.timeout });
+    return new Promise((resolve, reject) => {
+      let stdoutData = '';
+      let stderrData = '';
 
-    if (stderr && !stdout) {
-      throw new Error(stderr);
+      const child = spawn(this.cliPath, args, {
+        cwd: (context && context.project_root) ? context.project_root : process.cwd(),
+        shell: process.platform === 'win32', // Allows .cmd files on Windows to run
+        env: process.env
+      });
+
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error(`OpenCode CLI execution timeout (${this.timeout}ms)`));
+      }, this.timeout);
+
+      child.stdout.on('data', (data) => stdoutData += data.toString());
+      child.stderr.on('data', (data) => stderrData += data.toString());
+
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code !== 0 && !stdoutData) {
+          return reject(new Error(`Command failed: ${stderrData}`));
+        }
+        
+        try {
+          const result = this._extractJSON(stdoutData);
+          resolve(JSON.parse(result));
+        } catch(e) {
+          resolve({ output: stdoutData, success: true });
+        }
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  _extractJSON(output) {
+    if (typeof output !== 'string') return JSON.stringify(output);
+    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) return codeBlockMatch[1].trim();
+    const start = output.indexOf('{');
+    const end = output.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      return output.substring(start, end + 1);
     }
-
-    // 尝试提取 JSON
-    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-
-    return { output: stdout, success: true };
+    return output;
   }
 
   /**
@@ -220,11 +253,23 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
    */
   async healthCheck() {
     try {
-      const { exec } = require('child_process');
-      const { promisify } = require('util');
-      const execAsync = promisify(exec);
-      await execAsync(`${this.cliPath} --version`);
-      return true;
+      if (this.useCLI) {
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+        await execAsync(`${this.cliPath} --version`, { timeout: 5000 });
+        return true;
+      } else {
+        const http = require('http');
+        return new Promise((resolve) => {
+          const url = new URL(this.apiEndpoint + '/health');
+          const req = http.get(url, { timeout: 5000 }, (res) => {
+            resolve(res.statusCode === 200);
+          });
+          req.on('error', () => resolve(false));
+          req.on('timeout', () => req.destroy());
+        });
+      }
     } catch {
       return false;
     }

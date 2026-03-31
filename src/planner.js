@@ -4,11 +4,24 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const { AgentDispatcher } = require('./agents/dispatcher');
+const { ClaudeCodeAdapter } = require('./agents/claude-code');
+const { config } = require('../config');
 
 class Planner {
-  constructor(config = {}) {
-    this.config = config;
-    this.projectRoot = config.project_root || process.cwd();
+  constructor(configOverrides = {}) {
+    this.config = { ...config, ...configOverrides };
+    this.projectRoot = this.config.project_root || process.cwd();
+    // 实例化分发器以供 AI 分析使用
+    this.dispatcher = new AgentDispatcher({
+      ...this.config.dispatcher,
+      ...(this.config.agents?.opencode || {}),
+      ...(this.config.agents?.['claude-code'] || {})
+    });
+    this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
+      ...this.config.agents?.['claude-code'],
+      ...configOverrides
+    }));
   }
 
   /**
@@ -17,22 +30,94 @@ class Planner {
    * @returns {Promise<Object>} 执行计划
    */
   async plan(requirement) {
-    console.log(`[Planner] 分析需求: "${requirement}"`);
+    console.log(`[Planner] 利用 AI 开始深度分析需求: "${requirement}"`);
 
+    const prompt = `你是一个资深的软件架构师。请深入分析以下项目需求，并严格输出一个 JSON 格式的任务分解计划。
+不要包含任何多余的 Markdown 或闲聊文字。此输出将直接被程序解析。
+
+# 需求描述:
+${requirement}
+
+# 必须遵循的输出格式:
+{
+  "project": { "name": "项目英文短名称", "description": "一句话核心介绍" },
+  "features": ["特性1", "特性2", "特性3"],
+  "tasks": [
+    {
+      "id": "t1",
+      "description": "具体的开发阶段或实现任务",
+      "type": "architect", // 可选值: architect, create, integrate, test 等
+      "dependencies": [], // 此任务依赖的前置任务 id 列表
+      "agent": "claude-code",
+      "estimated_tokens": 2000,
+      "estimated_minutes": 15
+    }
+  ],
+  "milestones": [
+    { "id": "m1", "name": "基础框架阶段", "tasks": ["t1", "t2"] }
+  ]
+}`;
+
+    try {
+      // 1. 调用 claude-code 做深度需求分析
+      const agentResult = await this.dispatcher.dispatch({
+        id: 'plan_analysis',
+        type: 'analysis',
+        description: prompt,
+        context: { project_root: this.projectRoot }
+      });
+
+      // 2. 提取并验证 JSON
+      const content = this._extractJSON(
+        agentResult.output?.raw_output || 
+        agentResult.output?.review_report || 
+        agentResult.result || 
+        String(agentResult)
+      );
+      
+      const parsedPlan = JSON.parse(content);
+      return this._finalizePlan(parsedPlan, requirement);
+    } catch (e) {
+      console.log(`[Planner] ⚠️ AI 需求分析失败 (${e.message})，回退到规则分析模式...`);
+      return this._generateFallbackPlan(requirement);
+    }
+  }
+
+  _extractJSON(output) {
+    if (typeof output !== 'string') return JSON.stringify(output);
+    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) return codeBlockMatch[1].trim();
+    const start = output.indexOf('{');
+    const end = output.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      return output.substring(start, end + 1);
+    }
+    return output;
+  }
+
+  _finalizePlan(planObj, requirement) {
+    planObj.plan_id = `plan_${Date.now()}`;
+    planObj.created_at = new Date().toISOString();
+    planObj.requirement = requirement;
+    
+    planObj.metadata = {
+      total_tasks: planObj.tasks?.length || 0,
+      estimated_tokens: (planObj.tasks || []).reduce((sum, t) => sum + (t.estimated_tokens || 1000), 0),
+      total_minutes_estimate: (planObj.tasks || []).reduce((sum, t) => sum + (t.estimated_minutes || 5), 0)
+    };
+    
+    return planObj;
+  }
+
+  _generateFallbackPlan(requirement) {
     // 1. 理解需求，提取关键信息
     const analysis = this._analyze(requirement);
-    console.log(`[Planner] 分析完成: ${analysis.type}`);
-
     // 2. 拆解任务
     const tasks = this._decompose(analysis);
-    console.log(`[Planner] 任务拆解: ${tasks.length} 个任务`);
-
     // 3. 生成分阶段里程碑
     const milestones = this._createMilestones(tasks);
-    console.log(`[Planner] 里程碑: ${milestones.length} 个阶段`);
 
-    // 4. 生成计划
-    const plan = {
+    return {
       plan_id: `plan_${Date.now()}`,
       created_at: new Date().toISOString(),
       requirement,
@@ -48,8 +133,6 @@ class Planner {
         total_minutes_estimate: tasks.reduce((sum, t) => sum + (t.estimated_minutes || 5), 0)
       }
     };
-
-    return plan;
   }
 
   /**
@@ -119,9 +202,12 @@ class Planner {
     });
 
     // 阶段 2: 功能模块
+    const featureTaskIds = [];
     for (const feature of features) {
+      const currentId = `t${taskId++}`;
+      featureTaskIds.push(currentId);
       tasks.push({
-        id: `t${taskId++}`,
+        id: currentId,
         description: `实现${feature}功能`,
         type: 'create',
         dependencies: [`t${taskId - 2}`],
@@ -136,7 +222,7 @@ class Planner {
       id: `t${taskId++}`,
       description: '功能集成和联调测试',
       type: 'integrate',
-      dependencies: features.map((_, i) => `t${taskId - features.length + i}`),
+      dependencies: featureTaskIds,
       agent: 'claude-code',
       estimated_tokens: 2000,
       estimated_minutes: 10
@@ -183,9 +269,9 @@ class Planner {
       const taskNum = parseInt(task.id.replace('t', ''));
       if (taskNum <= 2) {
         milestones[0].tasks.push(task.id);
-      } else if (task.phase === 'integrate') {
+      } else if (task.type === 'integrate') {
         milestones[2].tasks.push(task.id);
-      } else if (task.type === 'test' || task.type === 'create' && task.description.includes('部署')) {
+      } else if (task.type === 'test' || (task.type === 'create' && task.description.includes('部署'))) {
         milestones[3].tasks.push(task.id);
       } else {
         milestones[1].tasks.push(task.id);

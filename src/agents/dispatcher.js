@@ -38,34 +38,23 @@ class AgentDispatcher {
     this.config = config;
     this.maxConcurrent = config.max_concurrent || 3;
     this.activeTasks = 0;
-
-    // 初始化 Agent
-    this._initAgents();
   }
 
   /**
-   * 初始化 Agent 实例
-   * @private
+   * 注册 Agent 适配器
+   * @param {string} name 
+   * @param {Object} adapter 
    */
-  _initAgents() {
-    // OpenCode
-    const opencodeConfig = {
-      use_cli: this.config.opencode_use_cli ?? true,
-      cli_path: this.config.opencode_cli_path || 'opencode',
-      api_endpoint: this.config.opencode_api_endpoint || 'http://localhost:3000',
-      timeout: this.config.opencode_timeout || 120000
-    };
-    this.agents.set('opencode', new OpenCodeAdapter(opencodeConfig));
+  registerAgent(name, adapter) {
+    this.agents.set(name, adapter);
+  }
 
-    // Claude Code
-    const claudeCodeConfig = {
-      use_cli: this.config.claude_code_use_cli ?? true,
-      cli_path: this.config.claude_code_cli_path || 'claude',
-      api_endpoint: this.config.claude_code_api_endpoint || 'http://localhost:8080',
-      timeout: this.config.claude_code_timeout || 300000,
-      model: this.config.claude_model || 'claude-opus-4-6'
-    };
-    this.agents.set('claude-code', new ClaudeCodeAdapter(claudeCodeConfig));
+  /**
+   * 注销 Agent 适配器
+   * @param {string} name 
+   */
+  unregisterAgent(name) {
+    this.agents.delete(name);
   }
 
   /**

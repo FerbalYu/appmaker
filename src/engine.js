@@ -8,9 +8,11 @@ const { OpenCodeAdapter } = require('./agents/opencode');
 const { ClaudeCodeAdapter } = require('./agents/claude-code');
 const fs = require('fs').promises;
 const path = require('path');
+const { EventEmitter } = require('events');
 
-class ExecutionEngine {
+class ExecutionEngine extends EventEmitter {
   constructor(config = {}) {
+    super();
     this.config = config;
     this.tasks = new Map();
     this.checkpoints = [];
@@ -25,6 +27,21 @@ class ExecutionEngine {
       claude_code_use_cli: config.claude_code_use_cli ?? true,
       claude_code_cli_path: config.claude_code_cli_path || 'claude'
     });
+    
+    // 注册 Agent
+    this.dispatcher.registerAgent('opencode', new OpenCodeAdapter({
+      use_cli: config.opencode_use_cli ?? true,
+      cli_path: config.opencode_cli_path || 'opencode',
+      api_endpoint: config.opencode_api_endpoint || 'http://localhost:3000',
+      timeout: config.opencode_timeout || 120000
+    }));
+    this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
+      use_cli: config.claude_code_use_cli ?? true,
+      cli_path: config.claude_code_cli_path || 'claude',
+      api_endpoint: config.claude_code_api_endpoint || 'http://localhost:8080',
+      timeout: config.claude_code_timeout || 300000,
+      model: config.claude_model || 'claude-opus-4-6'
+    }));
   }
 
   /**
@@ -41,18 +58,42 @@ class ExecutionEngine {
 
     for (const milestone of plan.milestones) {
       this._log('INFO', `\n=== 里程碑: ${milestone.name} ===`);
+      this.emit('milestone:start', { milestone, plan });
 
-      for (const taskId of milestone.tasks) {
-        const task = plan.tasks.find(t => t.id === taskId);
-        if (!task) {
-          this._log('WARN', `任务 ${taskId} 未找到`);
-          continue;
+      const executionPromises = new Map();
+      const milestoneTasks = milestone.tasks
+        .map(id => plan.tasks.find(t => t.id === id))
+        .filter(t => {
+          if (!t) this._log('WARN', `任务未找到`);
+          return Boolean(t);
+        });
+
+      const scheduleTask = async (task) => {
+        // 检查点恢复的支持：已完成的任务直接跳过
+        const existing = this.tasks.get(task.id);
+        if (existing && existing.status === 'done') {
+          return existing.result;
         }
 
-        // 检查依赖
-        if (this._hasUnmetDeps(task, results)) {
-          this.tasks.set(task.id, { status: 'blocked' });
-          continue;
+        if (task.dependencies && task.dependencies.length > 0) {
+          const depResults = await Promise.all(
+            task.dependencies.map(depId => {
+              if (executionPromises.has(depId)) return executionPromises.get(depId);
+              const pastState = this.tasks.get(depId);
+              if (pastState) return Promise.resolve(pastState.result || {status: pastState.status});
+              return Promise.resolve({status: 'done'});
+            })
+          );
+          if (depResults.some(r => r && r.status !== 'done')) {
+            const blockedResult = { task_id: task.id, status: 'blocked' };
+            this.tasks.set(task.id, { status: 'blocked', result: blockedResult });
+            return blockedResult;
+          }
+        }
+
+        if (this.halt) {
+          this._log('WARN', `由于系统风控 (halt)，任务 ${task.id} 被中止执行`);
+          return { status: 'aborted' };
         }
 
         // 执行任务
@@ -62,13 +103,22 @@ class ExecutionEngine {
 
         // 进度报告
         this._reportProgress(task, result);
+        return result;
+      };
+
+      for (const task of milestoneTasks) {
+        executionPromises.set(task.id, scheduleTask(task));
       }
+
+      await Promise.all(executionPromises.values());
 
       // 里程碑检查点
       await this._createCheckpoint(`milestone_${milestone.id}`);
+      this.emit('milestone:done', { milestone, plan });
     }
 
     const summary = this._generateSummary(results, startTime);
+    this.emit('plan:done', { plan, summary, results });
 
     return {
       plan_id: plan.plan_id,
@@ -83,9 +133,10 @@ class ExecutionEngine {
    * @private
    */
   async _executeTask(task, plan) {
+    this.emit('task:start', { task, plan });
     this._log('INFO', `\n[${task.id}] 开始: ${task.description}`);
 
-    const context = this._buildContext(task, plan);
+    const context = await this._buildContext(task, plan);
     let codeResult;
     let reviewResult;
     let cycle = 0;
@@ -113,12 +164,14 @@ class ExecutionEngine {
 
     if (codeResult.status === 'failed' || codeResult.success === false) {
       this._log('ERROR', `[${task.id}] claude-code 执行失败`);
-      return {
+      const errRes = {
         task_id: task.id,
         status: 'failed',
         phase: 'code',
         error: codeResult.error || codeResult.errors || 'Unknown error'
       };
+      this.emit('task:error', { task, result: errRes });
+      return errRes;
     }
 
     // 检查是否有文件产出
@@ -145,6 +198,8 @@ class ExecutionEngine {
         files: codeResult.output?.files_created || [],
         context
       });
+      // Emit the review pass automatically handled in supervisor
+      this.emit('task:review', { task, result: reviewResult });
     } catch (error) {
       this._log('ERROR', `[${task.id}] opencode 评审失败: ${error.message}`);
       return {
@@ -222,7 +277,7 @@ class ExecutionEngine {
     // 通过
     this._log('INFO', `[${task.id}] ✓ PASS (评分: ${reviewResult.output?.score || 0})`);
 
-    return {
+    const finalResult = {
       task_id: task.id,
       status: 'done',
       verdict: reviewResult.output?.verdict,
@@ -231,18 +286,20 @@ class ExecutionEngine {
       code_result: codeResult,
       review_result: reviewResult
     };
+    this.emit('task:done', { task, result: finalResult });
+    return finalResult;
   }
 
   /**
    * 构建上下文
    * @private
    */
-  _buildContext(task, plan) {
+  async _buildContext(task, plan) {
     return {
       task_id: task.id,
       project_root: this.projectRoot,
-      architecture_rules: this._loadRule('architecture'),
-      quality_rules: this._loadRule('quality'),
+      architecture_rules: await this._loadRule('architecture'),
+      quality_rules: await this._loadRule('quality'),
       checkpoint: this.checkpoints[this.checkpoints.length - 1]
     };
   }
@@ -251,12 +308,10 @@ class ExecutionEngine {
    * 加载规则文件
    * @private
    */
-  _loadRule(ruleName) {
+  async _loadRule(ruleName) {
     try {
       const rulePath = path.join(__dirname, '..', 'rules', `${ruleName}.rules.md`);
-      if (fs.existsSync(rulePath)) {
-        return fs.readFileSync(rulePath, 'utf-8');
-      }
+      return await fs.readFile(rulePath, 'utf-8');
     } catch {
       // 忽略
     }

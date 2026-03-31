@@ -113,43 +113,43 @@ class ClaudeCodeAdapter extends AgentAdapter {
       });
 
       child.on('close', (code) => {
+        clearTimeout(timer);
         if (code !== 0 && code !== null) {
           reject(new Error(`claude-code exited with code ${code}\nStderr: ${stderr}`));
           return;
         }
 
         try {
-          // 尝试解析多行 JSON
-          const lines = stdout.trim().split('\n');
-          const jsonLines = lines.filter(l => {
-            try {
-              JSON.parse(l);
-              return true;
-            } catch {
-              return false;
-            }
-          });
-
-          if (jsonLines.length > 0) {
-            resolve(JSON.parse(jsonLines[jsonLines.length - 1]));
-          } else {
-            resolve({ output: stdout, format: 'text', success: true });
-          }
+          const content = this._extractJSON(stdout);
+          resolve(JSON.parse(content));
         } catch (error) {
           resolve({ output: stdout, format: 'text', success: true });
         }
       });
 
       child.on('error', (error) => {
+        clearTimeout(timer);
         reject(new Error(`Failed to start claude-code: ${error.message}`));
       });
 
       // 超时处理
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         child.kill();
         reject(new Error('claude-code execution timeout'));
       }, this.timeout);
     });
+  }
+
+  _extractJSON(output) {
+    if (typeof output !== 'string') return JSON.stringify(output);
+    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) return codeBlockMatch[1].trim();
+    const start = output.indexOf('{');
+    const end = output.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      return output.substring(start, end + 1);
+    }
+    return output;
   }
 
   /**

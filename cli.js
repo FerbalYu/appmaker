@@ -12,6 +12,7 @@
 
 const { createEngine, healthCheck } = require('./src/agents');
 const { Planner } = require('./src/planner');
+const { Supervisor } = require('./src/supervisor');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -122,7 +123,8 @@ async function cmdPlan(requirement) {
 
     // 保存计划
     const filename = `plan_${Date.now()}.json`;
-    const { filepath } = await planner.savePlan(plan, filename);
+    const plansDir = path.join(__dirname, 'plans');
+    const { filepath } = await planner.savePlan(plan, filename, plansDir);
 
     console.log('\n生成的计划:');
     console.log(JSON.stringify(plan, null, 2));
@@ -186,7 +188,8 @@ async function cmdExecute(input) {
       plan = await planner.plan(input);
 
       const filename = `plan_${Date.now()}.json`;
-      await planner.savePlan(plan, filename);
+      const plansDir = path.join(__dirname, 'plans');
+      await planner.savePlan(plan, filename, plansDir);
     } catch (error) {
       console.error('\x1b[31mFailed to generate plan:\x1b[0m', error.message);
       if (process.env.DEBUG) {
@@ -225,7 +228,8 @@ async function cmdRun(requirement) {
     plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
-    await planner.savePlan(plan, filename);
+    const plansDir = path.join(__dirname, 'plans');
+    await planner.savePlan(plan, filename, plansDir);
   } catch (error) {
     console.error('\x1b[31mPlan generation failed:\x1b[0m', error.message);
     if (process.env.DEBUG) {
@@ -296,6 +300,11 @@ async function executePlan(plan) {
   const engine = createEngine({
     project_root: executeDir,
     max_review_cycles: 3
+  });
+
+  // 加载系统监控组件
+  const supervisor = new Supervisor(engine, {
+    logger: { logDir: path.join(executeDir, '.appmaker', 'logs') }
   });
 
   console.log('='.repeat(50));
