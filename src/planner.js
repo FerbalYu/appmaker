@@ -197,19 +197,49 @@ class Planner {
   }
 
   /**
-   * 保存计划到文件
-   * @param {Object} plan
-   * @param {string} filename
+   * 生成带时间戳的计划文件名
+   * @private
+   * @returns {string} 文件名格式: plan_YYYYMMDD_HHMMSS.json
    */
-  async savePlan(plan, filename) {
-    const plansDir = path.join(this.projectRoot, 'plans');
-    await fs.mkdir(plansDir, { recursive: true });
+  _generateTimestampFilename() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `plan_${year}${month}${day}_${hours}${minutes}${seconds}.json`;
+  }
 
-    const filepath = path.join(plansDir, filename);
+  /**
+   * 保存计划到文件
+   * @param {Object} plan - 执行计划对象
+   * @param {string} [filename] - 文件名（可选，默认自动生成带时间戳的文件名）
+   * @param {string} [output_path] - 输出目录路径（可选，默认当前目录）
+   * @returns {Promise<{filepath: string, filename: string}>} 保存结果，包含完整路径和文件名
+   */
+  async savePlan(plan, filename, output_path) {
+    // 使用提供的输出路径或默认当前目录
+    const resolved_output_path = output_path || this.projectRoot || process.cwd();
+    
+    // 生成文件名：使用提供的名称或自动生成带时间戳的名称
+    const resolved_filename = filename || this._generateTimestampFilename();
+    
+    // 确保输出目录存在
+    await fs.mkdir(resolved_output_path, { recursive: true });
+
+    // 拼接完整文件路径
+    const filepath = path.join(resolved_output_path, resolved_filename);
     await fs.writeFile(filepath, JSON.stringify(plan, null, 2), 'utf-8');
 
     console.log(`[Planner] 计划已保存: ${filepath}`);
-    return filepath;
+    
+    // 返回完整路径和文件名，便于调用方使用
+    return {
+      filepath,
+      filename: resolved_filename
+    };
   }
 }
 
