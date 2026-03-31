@@ -10,22 +10,22 @@
 
 ## 核心能力
 
-**appMaker** 是一个基于 Multi-Agent 协作的智能化开发框架，核心理念是让 AI 自主完成从需求分析到代码交付的全流程：
+**appMaker** 是一个基于 Multi-Agent 协作的智能化开发框架，让 AI 自主完成从需求分析到代码交付的全流程：
 
 | 阶段 | Agent | 职责 |
 |------|-------|------|
-| 规划 | **Planner** | 深度解析需求 → 任务分解 → 依赖图生成 |
-| 编程 | **NativeCoder** | 调用 AI API 生成代码（支持 OpenAI/Deepseek/MiniMax） |
+| 规划 | **Planner** | 需求理解、任务分解、里程碑生成 |
+| 编程 | **NativeCoder** | 调用 AI 大模型生成代码 |
 | 评审 | **NativeReviewer** | 代码质量评估、问题定位 |
-| 监控 | **Supervisor** | 进度追踪、Token 预警、风险熔断 |
-| 修正 | **Corrector** | 根因分析 → 自我修复 |
+| 监控 | **Supervisor** | 进度追踪、风险熔断、Token 预警 |
+| 修正 | **Corrector** | 根因分析、自动修复 |
 
 ```
-用户输入："做一个博客系统，支持文章发布和评论"
+用户输入："创建一个博客系统，支持文章发布和评论"
            │
            ▼
     ┌─────────────┐
-    │   Planner   │ ← MiniMax-M2.7 深度分析
+    │   Planner   │ ← MiniMax MCP 驱动
     └─────────────┘
            │
            ▼ (JSON 计划文件)
@@ -49,7 +49,7 @@
 | 依赖 | 版本 | 说明 |
 |------|------|------|
 | **Bun** | ≥ 1.0.0 | 运行时环境（替代 Node.js） |
-| **API Key** | — | OpenAI / MiniMax / Deepseek 三选一 |
+| **API Key** | — | MiniMax / OpenAI / Deepseek 三选一 |
 
 ### 安装 Bun
 
@@ -134,6 +134,7 @@ bun cli.js health
 | 选项 | 说明 |
 |------|------|
 | `--dir <path>` | 指定工作目录（默认 `cwd`） |
+| `--no-daemon` | 禁用持久守护进程 |
 | `--yes` / `-y` | 跳过确认提示 |
 | `DEBUG=1` | 输出完整错误堆栈 |
 
@@ -160,6 +161,13 @@ flowchart TB
         MiniMaxMCP[minimax-mcp.js]
     end
 
+    subgraph Daemon["持久化层"]
+        DaemonCore[daemon-core.js]
+        SessionManager[session-manager.js]
+        TaskQueue[task-queue.js]
+        MemoryStore[memory-store.js]
+    end
+
     subgraph Monitor["监控层"]
         ProgressMonitor[ProgressMonitor]
         SSE[SSE Web Dashboard]
@@ -172,6 +180,10 @@ flowchart TB
     Dispatcher --> NativeReviewer
     Engine --> Supervisor
     Supervisor --> Corrector
+    Engine --> DaemonCore
+    DaemonCore --> SessionManager
+    DaemonCore --> TaskQueue
+    DaemonCore --> MemoryStore
     Engine --> ProgressMonitor
     ProgressMonitor --> SSE
 ```
@@ -181,6 +193,7 @@ flowchart TB
 ```
 appMaker/
 ├── cli.js                     # CLI 入口
+├── daemon.js                  # 独立守护进程入口
 ├── src/
 │   ├── engine.js              # 执行引擎（编程↔评审循环）
 │   ├── planner.js             # 规划器（需求→执行计划）
@@ -192,9 +205,16 @@ appMaker/
 │   │   ├── index.js           # 统一导出（工厂函数）
 │   │   ├── base.js            # AgentAdapter 基类
 │   │   ├── dispatcher.js      # 任务调度器（路由+并发控制）
-│   │   ├── native-coder.js    # 原生 API 编程适配器
+│   │   ├── native-coder.js     # 原生 API 编程适配器
 │   │   ├── native-reviewer.js # 原生 API 评审适配器
 │   │   └── minimax-mcp.js     # MiniMax MCP 规划适配器
+│   │
+│   ├── daemon/                # 持久化守护进程
+│   │   ├── index.js           # 守护进程主入口
+│   │   ├── daemon-core.js     # 核心调度逻辑
+│   │   ├── session-manager.js # 会话管理
+│   │   ├── task-queue.js      # 任务队列
+│   │   └── memory-store.js    # 内存存储
 │   │
 │   └── monitor/               # 进度监控服务
 │       ├── index.js           # Bun.serve + SSE 推送
@@ -208,7 +228,7 @@ appMaker/
 │   └── agents.json            # Agent 配置
 │
 ├── rules/                      # AI 行为约束
-│   ├── architecture.rules.md   # 架构分层约束
+│   ├── architecture.rules.md    # 架构分层约束
 │   ├── quality.rules.md        # 代码质量规范
 │   └── self-correction.rules.md # 修正流程
 │
@@ -285,8 +305,6 @@ const results = await dispatchParallel([
 | **协议** | Server-Sent Events (SSE)，实时推送 |
 | **技术栈** | `Bun.serve`（零依赖） |
 
-启动后控制台会显示访问地址。
-
 ---
 
 ## 自动修正机制
@@ -304,15 +322,15 @@ const results = await dispatchParallel([
 
 ## 技术栈
 
-| 层级 | 技术选型 | 替代方案 |
-|------|----------|----------|
-| **运行时** | Bun 1.x | Node.js（需降级） |
-| **模块** | ES Modules (`import/export`) | — |
-| **HTTP 服务** | `Bun.serve` | Express |
-| **HTTP 客户端** | 原生 `fetch` + `AbortSignal` | axios |
-| **Agent 通信** | JSON-RPC 2.0 over stdio | — |
-| **MCP 协议** | `@modelcontextprotocol/sdk` | — |
-| **测试** | `bun test` | Jest |
+| 层级 | 技术选型 | 说明 |
+|------|----------|------|
+| **运行时** | Bun 1.x | 替代 Node.js，冷启动速度提升 ~10x |
+| **模块** | ES Modules (`import/export`) | 现代化模块系统 |
+| **HTTP 服务** | `Bun.serve` | 零依赖 Web 服务 |
+| **HTTP 客户端** | 原生 `fetch` + `AbortSignal` | 标准 Web API |
+| **Agent 通信** | JSON-RPC 2.0 over stdio | 进程间通信 |
+| **MCP 协议** | `@modelcontextprotocol/sdk` | 模型上下文协议 |
+| **测试** | `bun test` | 内置零配置测试框架 |
 
 ---
 
@@ -322,29 +340,26 @@ const results = await dispatchParallel([
 
 ```json
 {
+  "planner_agent": "minimax-mcp",
   "agents": {
+    "minimax-mcp": {
+      "enabled": true,
+      "description": "搜商 Agent - 负责调研和规划"
+    },
     "native-coder": {
       "enabled": true,
-      "model": "MiniMax-Text-01",
-      "timeout_ms": 120000
+      "description": "编程 Agent - 调用大模型完成代码编写",
+      "model": "MiniMax-M2.7"
     },
     "native-reviewer": {
       "enabled": true,
-      "model": "MiniMax-Text-01",
-      "timeout_ms": 60000
+      "description": "评审 Agent - 调用大模型完成代码审查",
+      "model": "MiniMax-M2.7"
     }
   },
   "dispatcher": {
-    "max_concurrent": 3
-  },
-  "engine": {
-    "max_review_cycles": 3
-  },
-  "supervisor": {
-    "thresholds": {
-      "max_tokens": 100000,
-      "max_errors": 5
-    }
+    "max_concurrent_agents": 3,
+    "default_agent": "native-coder"
   }
 }
 ```
@@ -362,6 +377,7 @@ const results = await dispatchParallel([
 - 🖥️ **`Bun.serve` 替代 `http` 模块**：进度面板更轻量
 - 🗑️ **移除冗余依赖**：移除 `dotenv`、`cross-spawn`、`jest`、`axios`
 - ✅ **`bun test` 替代 Jest**：零配置内置测试框架
+- 🧙 **新增守护进程**：持久化任务状态，支持断点恢复
 
 ### v1.0.0 — 2026-03-31
 

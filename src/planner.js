@@ -15,6 +15,8 @@ import { NativeCoderAdapter } from './agents/native-coder.js';
 import { MinimaxMCPAdapter } from './agents/minimax-mcp.js';
 import { UniversalToolbox } from './agents/universal-toolbox.js';
 import { config } from '../config/index.js';
+import { jsonrepair } from 'jsonrepair';
+import { MultiAgentThinker } from './thinker.js';
 
 export class Planner {
   constructor(configOverrides = {}) {
@@ -123,10 +125,22 @@ export class Planner {
     console.log(`[Planner] 🤖 开始 AI 深度需求分析...`);
     console.log(`[Planner] 需求: "${requirement.substring(0, 80)}${requirement.length > 80 ? '...' : ''}"`);
 
-    const enhancedPrompt = this._buildPlanningPrompt(requirement);
     const startTime = Date.now();
+    let enhancedRequirement = requirement;
 
-    this._showSpinner(startTime, 'AI 分析中');
+    this._showSpinner(startTime, '4-Agent 专家团队深度思考与架构发想中...');
+    try {
+      const thinker = new MultiAgentThinker({ verbose: false });
+      const thought = await thinker.think(requirement);
+      enhancedRequirement = `【原始需求】\n${requirement}\n\n【4-Agent 专家团队深度解析】\n${thought}`;
+    } catch (err) {
+      console.log(`\n[Planner] ⚠️ 4-Agent 思考模式发生降级 (${err.message})`);
+    }
+    this._clearSpinner();
+
+    const enhancedPrompt = this._buildPlanningPrompt(enhancedRequirement);
+    
+    this._showSpinner(Date.now(), 'AI 生成执行计划清单中...');
 
     const plannerAgentName = this.config.planner_agent || 'native-coder';
 
@@ -134,11 +148,11 @@ export class Planner {
       const agentResult = await this.dispatcher.dispatch({
         id: 'plan_analysis',
         type: 'analysis',
-        description: plannerAgentName === 'native-coder' ? enhancedPrompt : requirement,
+        description: plannerAgentName === 'native-coder' ? enhancedPrompt : enhancedRequirement,
         agent: plannerAgentName,
         context: { 
           project_root: this.projectRoot,
-          requirement,
+          requirement: enhancedRequirement,
           planning_config: {
             max_tasks: this.config.max_total_tasks,
             max_per_milestone: this.config.max_tasks_per_milestone,
@@ -283,78 +297,74 @@ ${requirement}
       return str;
     }
 
+    // 1. 尝试直接提取 JSON 代码块
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     if (codeBlocks.length > 0) {
-      if (process.env.PLANNER_DEBUG) {
-        console.log(`[Planner] _extractJSON: 发现 ${codeBlocks.length} 个代码块`);
-      }
       for (const match of codeBlocks) {
         try {
           const parsed = JSON.parse(match[1].trim());
-          if (process.env.PLANNER_DEBUG) {
-            console.log('[Planner] _extractJSON: 代码块解析成功');
-          }
           return JSON.stringify(parsed);
         } catch (e) {
-          if (process.env.PLANNER_DEBUG) {
-            console.log(`[Planner] _extractJSON: 代码块解析失败: ${e.message}`);
+          try {
+            const repaired = jsonrepair(match[1].trim());
+            const parsed = JSON.parse(repaired);
+            return JSON.stringify(parsed);
+          } catch (e2) {
+            if (process.env.PLANNER_DEBUG) {
+              console.log(`[Planner] _extractJSON: 代码块解析与修复均失败`);
+            }
           }
         }
       }
     }
 
+    // 2. 尝试提取 { ... } 或 [ ... ] 对象块
     const startObj = output.indexOf('{');
     const endObj = output.lastIndexOf('}');
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
       const candidate = output.substring(startObj, endObj + 1);
-      if (process.env.PLANNER_DEBUG) {
-        console.log(`[Planner] _extractJSON: 尝试解析 candidate (长度: ${candidate.length})`);
-      }
       try {
         JSON.parse(candidate);
-        if (process.env.PLANNER_DEBUG) {
-          console.log('[Planner] _extractJSON: candidate 解析成功');
-        }
         return candidate;
       } catch {
-        const braceCount = (candidate.match(/[{}]/g) || []).length;
-        if (braceCount > 2) {
-          let depth = 0, validEnd = -1;
-          for (let i = 0; i < candidate.length; i++) {
-            if (candidate[i] === '{') depth++;
-            else if (candidate[i] === '}') {
-              depth--;
-              if (depth === 0) { validEnd = i; break; }
-            }
-          }
-          if (validEnd > 0) {
-            const trimmed = candidate.substring(0, validEnd + 1);
-            try {
-              JSON.parse(trimmed);
-              if (process.env.PLANNER_DEBUG) {
-                console.log('[Planner] _extractJSON: trimmed 解析成功');
+        try {
+          const repaired = jsonrepair(candidate);
+          JSON.parse(repaired);
+          return repaired;
+        } catch {
+          // Fallback to finding matched brackets logic
+          const braceCount = (candidate.match(/[{}]/g) || []).length;
+          if (braceCount > 2) {
+            let depth = 0, validEnd = -1;
+            for (let i = 0; i < candidate.length; i++) {
+              if (candidate[i] === '{') depth++;
+              else if (candidate[i] === '}') {
+                depth--;
+                if (depth === 0) { validEnd = i; break; }
               }
-              return trimmed;
-            } catch { /* ignore */ }
+            }
+            if (validEnd > 0) {
+              const trimmed = candidate.substring(0, validEnd + 1);
+              try {
+                const repaired = jsonrepair(trimmed);
+                JSON.parse(repaired);
+                return repaired;
+              } catch { /* ignore */ }
+            }
           }
         }
       }
     }
 
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        JSON.parse(jsonMatch[0]);
-        if (process.env.PLANNER_DEBUG) {
-          console.log('[Planner] _extractJSON: jsonMatch 解析成功');
-        }
-        return jsonMatch[0];
-      } catch { /* ignore */ }
-    }
+    // 3. Fallback: 尝试最后整体修复
+    try {
+        const repaired = jsonrepair(output);
+        JSON.parse(repaired);
+        return repaired;
+    } catch { }
 
     if (process.env.PLANNER_DEBUG) {
       console.log('[Planner] _extractJSON: 所有解析方法都失败，返回原始字符串');
-      console.log('[Planner] _extractJSON: 原始输出前 500 字符:', output.substring(0, 500));
     }
 
     return output;

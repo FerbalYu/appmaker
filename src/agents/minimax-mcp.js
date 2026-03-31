@@ -6,6 +6,7 @@
  */
 
 import { AgentAdapter } from './base.js';
+import { jsonrepair } from 'jsonrepair';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -222,17 +223,36 @@ export class MinimaxMCPAdapter extends AgentAdapter {
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     for (const match of codeBlocks) {
       const extracted = match[1].trim();
-      if (this._isValidJSON(extracted)) return extracted;
+      if (this._isValidJSON(extracted)) {
+        return this._repairIfNeeded(extracted);
+      }
     }
 
     const startObj = output.indexOf('{');
     const endObj = output.lastIndexOf('}');
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
       const candidate = output.substring(startObj, endObj + 1);
-      if (this._isValidJSON(candidate)) return candidate;
+      if (this._isValidJSON(candidate)) {
+        return this._repairIfNeeded(candidate);
+      }
     }
+    
+    try {
+      if (this._isValidJSON(output)) {
+         return this._repairIfNeeded(output);
+      }
+    } catch {}
 
     return null;
+  }
+  
+  _repairIfNeeded(str) {
+      try {
+          JSON.parse(str);
+          return str;
+      } catch {
+          return jsonrepair(str);
+      }
   }
 
   _isValidJSON(str) {
@@ -243,7 +263,12 @@ export class MinimaxMCPAdapter extends AgentAdapter {
       JSON.parse(trimmed);
       return true;
     } catch {
-      return false;
+      try {
+         JSON.parse(jsonrepair(trimmed));
+         return true;
+      } catch {
+         return false;
+      }
     }
   }
 

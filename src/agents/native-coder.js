@@ -8,8 +8,8 @@
  * - LSP 代码分析
  * - 包管理器
  */
-
 import { AgentAdapter } from './base.js';
+import { jsonrepair } from 'jsonrepair';
 
 const NATIVE_CODER_CONFIG = {
   name: 'native-coder',
@@ -299,18 +299,46 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
+    
+    // 1. Try code blocks
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    const textToParse = codeBlocks.length > 0 ? codeBlocks[codeBlocks.length - 1][1].trim() : output;
-
-    const startObj = textToParse.indexOf('{');
-    const endObj = textToParse.lastIndexOf('}');
-    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
+    if (codeBlocks.length > 0) {
+      for (const match of codeBlocks) {
         try {
-            return JSON.parse(textToParse.substring(startObj, endObj + 1));
-        } catch(e) {
-          console.warn(`[${this.name}] JSON 解析失败，尝试降级处理`);
+          return JSON.parse(match[1].trim());
+        } catch (e) {
+          try {
+            return JSON.parse(jsonrepair(match[1].trim()));
+          } catch(e2) {
+            // continue parsing next block
+          }
         }
+      }
     }
+    
+    // 2. Try JSON Object syntax { ... }
+    const startObj = output.indexOf('{');
+    const endObj = output.lastIndexOf('}');
+    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
+      const candidate = output.substring(startObj, endObj + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch(e) {
+        try {
+          return JSON.parse(jsonrepair(candidate));
+        } catch(e2) {
+          console.warn(`[${this.name}] JSON 对象块解析失败，尝试降级处理`);
+        }
+      }
+    }
+
+    // 3. Fallback to repair whole string
+    try {
+      return JSON.parse(jsonrepair(output));
+    } catch {
+       console.warn(`[${this.name}] 全文 JSON 解析失败`);
+    }
+
     return { summary: "JSON parse failed, raw output captured.", tool_calls: [] };
   }
 

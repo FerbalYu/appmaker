@@ -40,6 +40,7 @@ export const TASK_TYPE_MAPPING = {
 export class AgentDispatcher {
   constructor(config = {}) {
     this.agents = new Map();
+    this.agentFactories = new Map();
     this.config = {
       max_concurrent: 3,
       request_timeout: 300000,
@@ -66,8 +67,14 @@ export class AgentDispatcher {
     });
   }
 
-  registerAgent(name, adapter) {
-    this.agents.set(name, adapter);
+  registerAgent(name, adapterOrFactory) {
+    if (typeof adapterOrFactory === 'function') {
+      this.agentFactories.set(name, adapterOrFactory);
+      this.agents.set(name, adapterOrFactory());
+    } else {
+      this.agents.set(name, adapterOrFactory);
+      this.agentFactories.set(name, () => adapterOrFactory);
+    }
     this.taskMetrics.set(name, {
       totalTasks: 0,
       successTasks: 0,
@@ -79,6 +86,7 @@ export class AgentDispatcher {
 
   unregisterAgent(name) {
     this.agents.delete(name);
+    this.agentFactories.delete(name);
     this.taskMetrics.delete(name);
   }
 
@@ -89,9 +97,9 @@ export class AgentDispatcher {
    */
   async dispatch(task) {
     const agentType = this._selectAgent(task);
-    const agent = this.agents.get(agentType);
+    const factory = this.agentFactories.get(agentType);
 
-    if (!agent) {
+    if (!factory) {
       throw new Error(`Unknown agent type: ${agentType}`);
     }
 
@@ -104,12 +112,15 @@ export class AgentDispatcher {
 
     await this._waitForSlot();
 
+    let agentInstance = null;
     try {
       this.activeTasks++;
       this._updateAgentMetrics(agentType, 'start');
 
+      agentInstance = factory();
+
       const result = await this._executeWithTimeout(
-        agent.execute(enrichedTask),
+        agentInstance.execute(enrichedTask),
         this.config.request_timeout,
         agentType,
         task.id
@@ -129,6 +140,9 @@ export class AgentDispatcher {
       
       throw this._normalizeError(error, agentType, task.id);
     } finally {
+      if (agentInstance && typeof agentInstance.cleanup === 'function' && agentInstance !== this.agents.get(agentType)) {
+        await agentInstance.cleanup();
+      }
       this.activeTasks--;
       this._processQueue();
     }
@@ -171,17 +185,22 @@ export class AgentDispatcher {
    * @private
    */
   async _dispatchParallel(task) {
-    const agent = this.agents.get('native-coder');
+    const factory = this.agentFactories.get('native-coder');
     const tasks = task.tasks || [];
     
     const promises = tasks.map(t => {
       const enrichedTask = this._enrichTask(t, 'native-coder');
+      const agentInstance = factory();
       return this._executeWithTimeout(
-        agent.execute(enrichedTask),
+        agentInstance.execute(enrichedTask),
         this.config.request_timeout,
         'native-coder',
         t.id
-      );
+      ).finally(async () => {
+        if (agentInstance && typeof agentInstance.cleanup === 'function' && agentInstance !== this.agents.get('native-coder')) {
+          await agentInstance.cleanup();
+        }
+      });
     });
 
     const results = await Promise.allSettled(promises);

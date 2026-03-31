@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^2.1.87",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "jsonrepair": "^3.13.3"
   }
 }

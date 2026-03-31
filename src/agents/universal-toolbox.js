@@ -119,6 +119,10 @@ async function copyDir(src, dest) {
 
 export class UniversalToolbox {
   constructor(config = {}) {
+    if (process.env.APPMAKER_MOCK === '1' && new.target === UniversalToolbox) {
+      return new SandboxToolbox(config);
+    }
+
     this.config = {
       workspace_root: config.workspace_root || process.cwd(),
       timeout: config.timeout || 30000,
@@ -1659,6 +1663,67 @@ export class UniversalToolbox {
     this.teams.clear();
     this.worktrees.clear();
     this.cronJobs.clear();
+  }
+}
+
+export class SandboxToolbox extends UniversalToolbox {
+  constructor(config = {}) {
+    super(config);
+    this.name = 'sandbox-toolbox';
+    this._log('WARN', 'SandboxToolbox initialized. DANGEROUS operations will be simulated.');
+  }
+
+  _log(level, msg) {
+    if (this.config.logger && typeof this.config.logger[level.toLowerCase()] === 'function') {
+      this.config.logger[level.toLowerCase()](`[SandboxToolbox] ${msg}`);
+    } else {
+      console.log(`[SandboxToolbox][${level}] ${msg}`);
+    }
+  }
+
+  async execute(toolName, args = {}) {
+    this._log('INFO', `Executing tool [${toolName}] in sandbox mode...`);
+    
+    const tool = this.tools.get(toolName);
+    if (!tool) {
+      return {
+        success: false,
+        tool: toolName,
+        error: `Tool not found: ${toolName}`,
+        duration_ms: 0
+      };
+    }
+
+    // 拦截有副作用的种类
+    const DANGEROUS_CATEGORIES = [
+      'bash',
+      'code_edit',
+      'git',
+      'package_manager'
+    ];
+    
+    const DANGEROUS_TOOLS = [
+      'write_file', 'delete_file', 'create_directory', 'move_file', 'copy_file',
+      'http_post', 'http_download'
+    ];
+
+    if (DANGEROUS_CATEGORIES.includes(tool.category) || DANGEROUS_TOOLS.includes(toolName)) {
+      this._log('WARN', `BLOCKED dangerous tool execution: ${toolName}. Simulating success.`);
+      
+      return {
+        success: true,
+        tool: toolName,
+        simulated: true,
+        result: {
+          simulated_success: true,
+          message: `[SANDBOX] The tool ${toolName} was intercepted and simulated.`,
+          args
+        },
+        duration_ms: 10
+      };
+    }
+
+    return super.execute(toolName, args);
   }
 }
 

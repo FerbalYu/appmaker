@@ -17,6 +17,7 @@ import { Planner } from './src/planner.js';
 import { Supervisor } from './src/supervisor.js';
 import { ProgressMonitor } from './src/monitor/index.js';
 import { createDaemon, DAEMON_STATE } from './src/daemon/index.js';
+import { MultiAgentThinker } from './src/thinker.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -42,6 +43,13 @@ const daemonIndex = args.indexOf('--no-daemon');
 if (daemonIndex !== -1) {
   daemonMode = false;
   args.splice(daemonIndex, 1);
+}
+
+const mockIndex = args.findIndex(arg => arg === '--mock' || arg === '--dry-run');
+if (mockIndex !== -1) {
+  process.env.APPMAKER_MOCK = '1';
+  console.log('\x1b[33m🚀 警告: 已启用 MOCK/DRY-RUN 模式，所有写操作和命令执行将被沙箱模拟。\x1b[0m');
+  args.splice(mockIndex, 1);
 }
 
 const mainDir = path.resolve(__dirname);
@@ -123,6 +131,12 @@ async function main() {
       case '--run':
       case 'r':
         await cmdRun(args[1]);
+        break;
+
+      case 'think':
+      case '--think':
+      case 't':
+        await cmdThink();
         break;
 
       case 'daemon':
@@ -553,6 +567,7 @@ function showHelp() {
    plan (p) <需求>     生成执行计划
    execute (e) <计划>  执行计划文件
    run (r) <需求>      一键生成计划并执行（推荐）
+   think (t) <问题>    启动 4-Agent 思考与辩论模式
    daemon (d)          查看守护进程状态
    status (s)          查看当前执行状态
    logs (l) [类型]     查看日志 (execution|quality|corrections)
@@ -731,6 +746,45 @@ async function cmdConfig(key, value) {
   }
   
   console.log();
+}
+
+async function cmdThink() {
+  const autoYes = args.includes('--yes') || args.includes('-y');
+  const actualArgs = args.filter(a => !a.startsWith('--yes') && a !== '-y' && a !== '--verbose' && a !== '-v');
+  const question = actualArgs.slice(1).join(' ');
+
+  if (!question) {
+    console.error('\x1b[31m错误: 请提供需要思考的问题\x1b[0m');
+    console.log('用法: bun cli.js think "你的问题"');
+    process.exit(1);
+  }
+
+  // 强制显示内部讨论轨迹 (CLI 展示时要把内部讨论过程印出来)
+  const verbose = true; 
+
+  console.log('\n' + '='.repeat(50));
+  console.log('🤖 进入 4-Agent 多角色思考模式');
+  console.log('问题: ' + question);
+  console.log('='.repeat(50) + '\n');
+
+  try {
+    const thinker = new MultiAgentThinker({ verbose });
+    
+    const answer = await thinker.think(question, (msg) => {
+       console.log(`\x1b[36m[Thinker]\x1b[0m ${msg}`);
+    });
+
+    console.log('\n' + '='.repeat(50));
+    console.log('🌟 最终共识解答 🌟');
+    console.log('='.repeat(50) + '\n');
+    console.log(answer);
+    console.log('\n' + '='.repeat(50) + '\n');
+
+  } catch (err) {
+    console.error('\x1b[31m思考过程中发生错误:\x1b[0m', err.message);
+    if (process.env.DEBUG) console.error(err.stack);
+    process.exit(1);
+  }
 }
 
 main();

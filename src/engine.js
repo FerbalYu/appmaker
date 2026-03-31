@@ -48,12 +48,12 @@ export class ExecutionEngine extends EventEmitter {
       max_retries: this.config.max_retries
     });
 
-    this.dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
+    this.dispatcher.registerAgent('native-reviewer', () => new NativeReviewerAdapter({
       model: config.native_reviewer_model,
       api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
       api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
     }));
-    this.dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
+    this.dispatcher.registerAgent('native-coder', () => new NativeCoderAdapter({
       model: config.native_coder_model,
       api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
       api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
@@ -84,6 +84,16 @@ export class ExecutionEngine extends EventEmitter {
       await this._createCheckpoint(`milestone_${milestone.id}`);
       this._log('INFO', `✅ 里程碑 "${milestone.name}" 完成`);
       this.emit('milestone:done', { milestone, plan });
+
+      // 强制内存回收
+      if (global.gc) {
+        try {
+          global.gc();
+          this._log('DEBUG', `🧹 执行强制垃圾回收 (Milestone: ${milestone.name})`);
+        } catch (e) {
+          this._log('DEBUG', `🧹 垃圾回收失败: ${e.message}`);
+        }
+      }
 
       if (this._checkResourceExhausted()) {
         this._log('WARN', '⚠️ 资源耗尽，停止执行后续里程碑');
@@ -142,6 +152,7 @@ export class ExecutionEngine extends EventEmitter {
             this.tasks.set(task.id, { status: result.status, result });
             this._reportProgress(task, result);
             this._trackTokenUsage(result);
+            completed.set(task.id, result);
             return result;
           })
           .catch(error => {
@@ -149,6 +160,7 @@ export class ExecutionEngine extends EventEmitter {
             results.push(errorResult);
             this.tasks.set(task.id, { status: 'failed', result: errorResult });
             this._reportProgress(task, errorResult);
+            completed.set(task.id, errorResult);
             return errorResult;
           })
           .finally(() => executing.delete(task.id));

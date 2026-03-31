@@ -388,12 +388,21 @@ export class SessionManager extends EventEmitter {
   _startCleanupTimer() {
     this.cleanupTimer = setInterval(async () => {
       const idleSessions = this.list({ state: SESSION_STATE.IDLE });
+      let cleaned = 0;
 
       for (const session of idleSessions) {
         const idleTime = Date.now() - session.timing.lastActivity;
         if (idleTime > this.config.sessionTimeout) {
           await this.close(session.id, 'cleanup');
+          cleaned++;
         }
+      }
+
+      if (cleaned > 0 && typeof global.gc === 'function') {
+        try {
+          global.gc();
+          this.logger.debug(`Cleaned up ${cleaned} sessions and executed GC.`);
+        } catch (e) {}
       }
     }, this.config.sessionTimeout / 2);
 
