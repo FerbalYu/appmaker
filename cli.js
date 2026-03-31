@@ -36,6 +36,15 @@ process.on('unhandledRejection', (error, promise) => {
   process.exit(1);
 });
 
+// 捕获未捕获的同步异常
+process.on('uncaughtException', (error) => {
+  console.error('\x1b[31mUnhandled Exception:\x1b[0m', error?.message || error);
+  if (process.env.DEBUG) {
+    console.error(error.stack);
+  }
+  process.exit(1);
+});
+
 async function main() {
   try {
     console.log('='.repeat(50));

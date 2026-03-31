@@ -5,3 +5,6 @@
 
 ## Round 7
 - **cli.js**: SEARCH/REPLACE block
+
+## Round 8
+- **cli.js**: SEARCH/REPLACE block
