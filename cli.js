@@ -145,7 +145,17 @@ async function cmdExecute(input) {
     // 是计划文件
     console.log(`加载计划: ${input}\n`);
     const content = await fs.readFile(input, 'utf-8');
-    plan = JSON.parse(content);
+    
+    // 解析 JSON 并捕获格式错误
+    try {
+      plan = JSON.parse(content);
+    } catch (parseError) {
+      console.error('\x1b[31mInvalid JSON format\x1b[0m');
+      if (process.env.DEBUG) {
+        console.error(parseError.message);
+      }
+      process.exit(1);
+    }
 
     // Validate plan structure
     if (!plan || typeof plan !== 'object') {
@@ -154,7 +164,7 @@ async function cmdExecute(input) {
     }
     const steps = plan.steps || plan.tasks || plan.items;
     if (!Array.isArray(steps) || steps.length === 0) {
-      console.error('\x1b[31mError: Plan has no executable steps\x1b[0m');
+      console.error('\x1b[31mPlan has no steps/tasks/items\x1b[0m');
       process.exit(1);
     }
   } else {
@@ -253,8 +263,16 @@ async function cmdRun(requirement) {
 }
 
 // ===== 辅助函数 =====
-
 async function executePlan(plan) {
+  // 验证工作目录存在
+  try {
+    await fs.access(executeDir, fs.constants.W_OK);
+  } catch (err) {
+    console.error(`\x1b[31mExecute directory not found or not writable: ${executeDir}\x1b[0m`);
+    process.exit(1);
+  }
+  
+  console.log('开始执行计划...\n');
   // 检查 Agent
   console.log('检查 Agent...\n');
   const status = await healthCheck();
