@@ -28,11 +28,9 @@ if (dirIndex !== -1 && args[dirIndex + 1]) {
 }
 
 // 捕获未处理的 Promise 拒绝
-process.on('unhandledRejection', (error, promise) => {
-  console.error('\x1b[31mUnhandled Rejection:\x1b[0m', error?.message || error);
-  if (process.env.DEBUG) {
-    console.error(error.stack);
-  }
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('\x1b[31mUnhandled Rejection:\x1b[0m', reason);
+  if (process.env.DEBUG) console.error(reason?.stack || reason);
   process.exit(1);
 });
 
