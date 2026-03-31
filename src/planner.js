@@ -13,6 +13,7 @@ import path from 'path';
 import { AgentDispatcher } from './agents/dispatcher.js';
 import { NativeCoderAdapter } from './agents/native-coder.js';
 import { MinimaxMCPAdapter } from './agents/minimax-mcp.js';
+import { UniversalToolbox } from './agents/universal-toolbox.js';
 import { config } from '../config/index.js';
 
 export class Planner {
@@ -39,6 +40,78 @@ export class Planner {
       ...this.config.agents?.['minimax-mcp'],
       ...configOverrides
     }));
+
+    this.toolbox = new UniversalToolbox({
+      workspace_root: this.projectRoot
+    });
+  }
+
+  /**
+   * 获取工具列表
+   */
+  getTools() {
+    return this.toolbox.getToolsMetadata();
+  }
+
+  /**
+   * 使用工具执行操作
+   */
+  async executeTool(toolName, args) {
+    return this.toolbox.execute(toolName, args);
+  }
+
+  /**
+   * 生成任务清单到 todo_write
+   */
+  async syncTasksToTodo(plan) {
+    const todoItems = plan.tasks.map(task => ({
+      content: `[${task.id}] ${task.description}`,
+      status: 'pending',
+      priority: task.type === 'architect' ? 'high' : 'medium'
+    }));
+
+    const result = await this.toolbox.execute('todo_write', { todos: todoItems });
+    console.log(`[Planner] 📝 任务清单已同步: ${result.result?.count || 0} 项`);
+    return result;
+  }
+
+  /**
+   * 创建项目任务记录
+   */
+  async createProjectTasks(plan) {
+    const results = [];
+    for (const task of plan.tasks) {
+      const result = await this.toolbox.execute('task_create', {
+        title: `[${task.id}] ${task.description}`,
+        description: `类型: ${task.type} | 依赖: ${task.dependencies.join(', ') || '无'}`,
+        priority: task.type === 'architect' ? 'high' : 'medium',
+        tags: [task.type, plan.project?.name]
+      });
+      if (result.success) {
+        results.push({ taskId: task.id, ...result.result });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * 获取当前项目任务状态
+   */
+  async getTaskStatus() {
+    const result = await this.toolbox.execute('task_list', {});
+    return result;
+  }
+
+  /**
+   * 清理项目任务
+   */
+  async cleanupTasks() {
+    const listResult = await this.toolbox.execute('task_list', {});
+    if (listResult.success && listResult.result.tasks) {
+      for (const task of listResult.result.tasks) {
+        await this.toolbox.execute('task_delete', { task_id: task.id });
+      }
+    }
   }
 
   /**

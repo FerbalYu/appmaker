@@ -10,6 +10,8 @@
 
 import { NativeCoderAdapter } from './native-coder.js';
 import { NativeReviewerAdapter } from './native-reviewer.js';
+import { PermissionClassifier } from './permission-classifier.js';
+import { UniversalToolbox } from './universal-toolbox.js';
 
 export const TASK_TYPE_MAPPING = {
   create: 'native-coder',
@@ -50,6 +52,18 @@ export class AgentDispatcher {
     this.activeTasks = 0;
     this.taskQueue = [];
     this.taskMetrics = new Map();
+    
+    this.permissionClassifier = new PermissionClassifier({
+      auto_allow_low_risk: config.auto_allow_low_risk !== false,
+      auto_deny_critical: config.auto_deny_critical !== false,
+      enable_ai_delegation: config.enable_ai_delegation !== false,
+      history_file: config.permission_history_file
+    });
+    
+    this.toolbox = new UniversalToolbox({
+      workspace_root: config.workspace_root || process.cwd(),
+      timeout: config.tool_timeout || 30000
+    });
   }
 
   registerAgent(name, adapter) {
@@ -311,7 +325,105 @@ export class AgentDispatcher {
   }
 
   /**
-   * 停止所有 Agent
+   * 使用权限分类器检查工具调用
+   * @param {Object} toolCall - 工具调用请求
+   * @returns {Promise<Object>} 权限决策结果
+   */
+  async classifyToolCall(toolCall) {
+    return this.permissionClassifier.classify(toolCall);
+  }
+
+  /**
+   * 批量检查工具调用权限
+   * @param {Array} toolCalls - 工具调用数组
+   * @returns {Promise<Array>} 权限决策结果数组
+   */
+  async classifyToolCallsBatch(toolCalls) {
+    return this.permissionClassifier.classifyBatch(toolCalls);
+  }
+
+  /**
+   * 快速执行工具（自动权限检查）
+   * @param {string} toolName - 工具名称
+   * @param {Object} args - 工具参数
+   * @returns {Promise<Object>} 执行结果
+   */
+  async executeTool(toolName, args = {}) {
+    const toolCall = { tool_name: toolName, arguments: args };
+    const classification = await this.permissionClassifier.classify(toolCall);
+
+    if (classification.decision === 'auto_deny') {
+      return {
+        success: false,
+        tool: toolName,
+        denied: true,
+        reason: 'Risk level too high, auto denied',
+        risk_level: classification.risk_level
+      };
+    }
+
+    if (classification.decision === 'need_confirm') {
+      return {
+        success: false,
+        tool: toolName,
+        needs_confirmation: true,
+        reason: 'Medium risk, requires confirmation',
+        risk_level: classification.risk_level
+      };
+    }
+
+    return this.toolbox.execute(toolName, args);
+  }
+
+  /**
+   * 强制执行工具（跳过权限检查，仅用于已确认安全的场景）
+   * @param {string} toolName
+   * @param {Object} args
+   * @returns {Promise<Object>}
+   */
+  async executeToolForced(toolName, args = {}) {
+    return this.toolbox.execute(toolName, args);
+  }
+
+  /**
+   * 获取工具箱中所有可用工具
+   * @returns {Array} 工具元数据数组
+   */
+  getAvailableTools() {
+    return this.toolbox.getToolsMetadata();
+  }
+
+  /**
+   * 获取工具箱状态
+   */
+  getToolboxStatus() {
+    return {
+      tool_count: this.toolbox.tools.size,
+      lsp_clients: this.toolbox.lspClients.size,
+      subagents: this.toolbox.subagents.size,
+      bash_processes: this.toolbox.bashProcesses.size
+    };
+  }
+
+  /**
+   * 确认或拒绝待审批的工具调用
+   * @param {string} toolName
+   * @param {Object} args
+   * @param {boolean} approved
+   */
+  async confirmToolCall(toolName, args, approved) {
+    return this.permissionClassifier.confirm(toolName, args, approved);
+  }
+
+  /**
+   * 获取权限分类器统计
+   */
+  getPermissionStats() {
+    return this.permissionClassifier.getStats();
+  }
+
+  /**
+   * 停止所有 Agent 和清理资源
    */
   async shutdown() {
     for (const [name, agent] of this.agents) {
@@ -319,6 +431,11 @@ export class AgentDispatcher {
         await agent.shutdown();
       }
     }
+    
+    if (this.toolbox) {
+      await this.toolbox.cleanup();
+    }
+    
     this.taskQueue = [];
   }
 }

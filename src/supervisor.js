@@ -10,6 +10,7 @@
 
 import { Logger } from './logger.js';
 import { SelfCorrector } from './corrector.js';
+import { UniversalToolbox } from './agents/universal-toolbox.js';
 
 const REVIEW_THRESHOLD = 85;
 
@@ -18,6 +19,10 @@ export class Supervisor {
     this.engine = engine;
     this.logger = new Logger(config.logger);
     this.corrector = new SelfCorrector(engine);
+    
+    this.toolbox = new UniversalToolbox({
+      workspace_root: config.workspace_root || process.cwd()
+    });
     
     this.config = {
       maxTokens: 100000,
@@ -77,6 +82,35 @@ export class Supervisor {
       clearInterval(this._riskMonitorInterval);
       this._riskMonitorInterval = null;
     }
+  }
+
+  /**
+   * 使用工具更新任务状态
+   */
+  async updateTaskStatus(taskId, status) {
+    const result = await this.toolbox.execute('task_update', {
+      task_id: taskId,
+      status
+    });
+    return result;
+  }
+
+  /**
+   * 获取任务清单状态
+   */
+  async getTaskList() {
+    return this.toolbox.execute('task_list', {});
+  }
+
+  /**
+   * 使用工具发送消息给团队
+   */
+  async sendTeamMessage(agentId, message, priority = 'normal') {
+    return this.toolbox.execute('send_message', {
+      agent_id: agentId,
+      message,
+      priority
+    });
   }
 
   _onTaskStart({ task }) {
