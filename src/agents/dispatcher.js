@@ -3,33 +3,33 @@
  * claude-code 负责编程，opencode 负责毒舌点评
  */
 
-import { OpenCodeAdapter } from './opencode.js';
-import { ClaudeCodeAdapter } from './claude-code.js';
+import { NativeCoderAdapter } from './native-coder.js';
+import { NativeReviewerAdapter } from './native-reviewer.js';
 
 export const TASK_TYPE_MAPPING = {
-  // ===== 编程任务 → claude-code =====
-  'create': 'claude-code',
-  'modify': 'claude-code',
-  'crud': 'claude-code',
-  'template': 'claude-code',
-  'simple': 'claude-code',
-  'architect': 'claude-code',
-  'design': 'claude-code',
-  'complex': 'claude-code',
-  'analysis': 'claude-code',
-  'debug': 'claude-code',
-  'refactor': 'claude-code',
-  'coordinate': 'claude-code',
-  'auth': 'claude-code',
-  'security': 'claude-code',
-  'api': 'claude-code',
-  'integration': 'claude-code',
+  // ===== 编程任务 → native-coder =====
+  'create': 'native-coder',
+  'modify': 'native-coder',
+  'crud': 'native-coder',
+  'template': 'native-coder',
+  'simple': 'native-coder',
+  'architect': 'native-coder',
+  'design': 'native-coder',
+  'complex': 'native-coder',
+  'analysis': 'native-coder',
+  'debug': 'native-coder',
+  'refactor': 'native-coder',
+  'coordinate': 'native-coder',
+  'auth': 'native-coder',
+  'security': 'native-coder',
+  'api': 'native-coder',
+  'integration': 'native-coder',
 
-  // ===== 评审任务 → opencode =====
-  'review': 'opencode',
-  'test': 'opencode',
-  'docs': 'opencode',
-  'document': 'opencode'
+  // ===== 评审任务 → native-reviewer =====
+  'review': 'native-reviewer',
+  'test': 'native-reviewer',
+  'docs': 'native-reviewer',
+  'document': 'native-reviewer'
 };
 
 export class AgentDispatcher {
@@ -83,9 +83,9 @@ export class AgentDispatcher {
    * @private
    */
   async _dispatchParallel(tasks) {
-    const agent = this.agents.get('claude-code');
+    const agent = this.agents.get('native-coder');
     const promises = tasks.map(task => {
-      const enrichedTask = this._enrichTask(task, 'claude-code');
+      const enrichedTask = this._enrichTask(task, 'native-coder');
       return agent.execute(enrichedTask);
     });
 
@@ -114,16 +114,16 @@ export class AgentDispatcher {
     const desc = (description || '').toLowerCase();
 
     const reviewKeywords = ['review', '评审', '检查', '批评', 'critique'];
-    if (reviewKeywords.some(k => desc.includes(k))) return 'opencode';
+    if (reviewKeywords.some(k => desc.includes(k))) return 'native-reviewer';
 
     const codeKeywords = [
       'implement', '实现', 'create', '创建', 'write', '写',
       'fix', '修复', 'bug', 'add', '删除', '修改',
       '功能', 'feature', 'module', '模块'
     ];
-    if (codeKeywords.some(k => desc.includes(k))) return 'claude-code';
+    if (codeKeywords.some(k => desc.includes(k))) return 'native-coder';
 
-    return 'claude-code';
+    return 'native-coder';
   }
 
   _enrichTask(task, agentType) {

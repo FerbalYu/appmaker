@@ -4,13 +4,13 @@
  */
 
 export { AgentAdapter, RESULT_FORMAT } from './base.js';
-export { OpenCodeAdapter } from './opencode.js';
-export { ClaudeCodeAdapter } from './claude-code.js';
+export { NativeCoderAdapter } from './native-coder.js';
+export { NativeReviewerAdapter } from './native-reviewer.js';
 export { AgentDispatcher, TASK_TYPE_MAPPING } from './dispatcher.js';
 
 import { AgentDispatcher } from './dispatcher.js';
-import { ClaudeCodeAdapter } from './claude-code.js';
-import { OpenCodeAdapter } from './opencode.js';
+import { NativeCoderAdapter } from './native-coder.js';
+import { NativeReviewerAdapter } from './native-reviewer.js';
 import { ExecutionEngine } from '../engine.js';
 import { Planner } from '../planner.js';
 import { config } from '../../config/index.js';
@@ -23,18 +23,18 @@ import { config } from '../../config/index.js';
 export function createDispatcher(overrideConfig = {}) {
   const finalConfig = {
     ...config.dispatcher,
-    ...(config.agents?.opencode || {}),
-    ...(config.agents?.['claude-code'] || {}),
+    ...(config.agents?.['native-reviewer'] || {}),
+    ...(config.agents?.['native-coder'] || {}),
     ...overrideConfig
   };
   const dispatcher = new AgentDispatcher(finalConfig);
 
-  dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
-    ...config.agents?.['claude-code'],
+  dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
+    ...config.agents?.['native-coder'],
     ...overrideConfig
   }));
-  dispatcher.registerAgent('opencode', new OpenCodeAdapter({
-    ...config.agents?.opencode,
+  dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
+    ...config.agents?.['native-reviewer'],
     ...overrideConfig
   }));
 

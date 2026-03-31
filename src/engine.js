@@ -4,8 +4,8 @@
  */
 
 import { AgentDispatcher } from './agents/dispatcher.js';
-import { OpenCodeAdapter } from './agents/opencode.js';
-import { ClaudeCodeAdapter } from './agents/claude-code.js';
+import { NativeCoderAdapter } from './agents/native-coder.js';
+import { NativeReviewerAdapter } from './agents/native-reviewer.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -24,24 +24,19 @@ export class ExecutionEngine extends EventEmitter {
     this.projectRoot = config.project_root || process.cwd();
 
     this.dispatcher = new AgentDispatcher({
-      opencode_use_cli: config.opencode_use_cli ?? true,
-      opencode_cli_path: config.opencode_cli_path || 'opencode',
-      claude_code_use_cli: config.claude_code_use_cli ?? true,
-      claude_code_cli_path: config.claude_code_cli_path || 'claude'
+      native_reviewer_model: config.native_reviewer_model || 'MiniMax-Text-01',
+      native_coder_model: config.native_coder_model || 'MiniMax-Text-01'
     });
 
-    this.dispatcher.registerAgent('opencode', new OpenCodeAdapter({
-      use_cli: config.opencode_use_cli ?? true,
-      cli_path: config.opencode_cli_path || 'opencode',
-      api_endpoint: config.opencode_api_endpoint || 'http://localhost:3000',
-      timeout: config.opencode_timeout || 300000
+    this.dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
+      model: config.native_reviewer_model,
+      api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
+      api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
     }));
-    this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
-      use_cli: config.claude_code_use_cli ?? true,
-      cli_path: config.claude_code_cli_path || 'claude',
-      api_endpoint: config.claude_code_api_endpoint || 'http://localhost:8080',
-      timeout: config.claude_code_timeout || 300000,
-      model: config.claude_model || 'claude-opus-4-6'
+    this.dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
+      model: config.native_coder_model,
+      api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
+      api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
     }));
   }
 
@@ -135,8 +130,8 @@ export class ExecutionEngine extends EventEmitter {
     let reviewResult;
     let cycle = 0;
 
-    // 阶段 1: claude-code 编程
-    this._log('INFO', `[${task.id}] claude-code 编程中...`);
+    // 阶段 1: native-coder 编程
+    this._log('INFO', `[${task.id}] native-coder 编程中...`);
     try {
       codeResult = await this.dispatcher.dispatch({
         id: task.id,
@@ -146,26 +141,25 @@ export class ExecutionEngine extends EventEmitter {
         context
       });
     } catch (error) {
-      this._log('ERROR', `[${task.id}] claude-code 执行失败: ${error.message}`);
+      this._log('ERROR', `[${task.id}] native-coder 执行失败: ${error.message}`);
       return { task_id: task.id, status: 'failed', phase: 'code', error: error.message };
     }
 
     if (codeResult.status === 'failed' || codeResult.success === false) {
-      this._log('ERROR', `[${task.id}] claude-code 执行失败`);
+      this._log('ERROR', `[${task.id}] native-coder 执行失败`);
       const errRes = { task_id: task.id, status: 'failed', phase: 'code', error: codeResult.error || codeResult.errors || 'Unknown error' };
       this.emit('task:error', { task, result: errRes });
       return errRes;
     }
 
     if (!codeResult.output?.files_created?.length && !codeResult.output?.files_modified?.length) {
-      this._log('ERROR', `[${task.id}] claude-code 没有产出任何文件`);
-      return { task_id: task.id, status: 'failed', phase: 'code', error: 'No files produced' };
+      this._log('WARN', `[${task.id}] native-coder 本次执行没有生成或修改任何文件。`);
+    } else {
+      this._log('INFO', `[${task.id}] 编程完成，文件: ${(codeResult.output?.files_created?.length || 0) + (codeResult.output?.files_modified?.length || 0)}`);
     }
 
-    this._log('INFO', `[${task.id}] 编程完成，文件: ${codeResult.output?.files_created?.length || 0}`);
-
-    // 阶段 2: opencode 毒舌点评
-    this._log('INFO', `[${task.id}] opencode 毒舌点评中...`);
+    // 阶段 2: native-reviewer 代码审查
+    this._log('INFO', `[${task.id}] native-reviewer 审查代码中...`);
     try {
       reviewResult = await this.dispatcher.dispatch({
         id: `review_${task.id}`,
@@ -176,7 +170,7 @@ export class ExecutionEngine extends EventEmitter {
       });
       this.emit('task:review', { task, result: reviewResult });
     } catch (error) {
-      this._log('ERROR', `[${task.id}] opencode 评审失败: ${error.message}`);
+      this._log('ERROR', `[${task.id}] native-reviewer 评审失败: ${error.message}`);
       return { task_id: task.id, status: 'failed', phase: 'review', error: error.message };
     }
 

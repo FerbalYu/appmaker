@@ -5,28 +5,20 @@
       "enabled": true,
       "description": "搜商 Agent - 负责调研和规划"
     },
-    "claude-code": {
+    "native-coder": {
       "enabled": true,
-      "description": "编程 Agent - 负责写代码",
-      "use_cli": true,
-      "cli_path": "claude",
-      "api_endpoint": "http://localhost:8080",
-      "timeout_ms": 300000,
-      "max_retries": 3,
-      "model": "claude-opus-4-6"
+      "description": "编程 Agent - 原生调用大模型完成代码编写",
+      "model": "MiniMax-M2.7"
     },
-    "opencode": {
+    "native-reviewer": {
       "enabled": true,
-      "description": "评审 Agent - 负责毒舌点评",
-      "use_cli": true,
-      "cli_path": "opencode",
-      "api_endpoint": "http://localhost:3000",
-      "timeout_ms": 60000
+      "description": "评审 Agent - 原生调用大模型完成代码审查",
+      "model": "MiniMax-M2.7"
     }
   },
   "dispatcher": {
     "max_concurrent_agents": 3,
-    "default_agent": "claude-code",
+    "default_agent": "native-coder",
     "checkpoint": null
   },
   "task_defaults": {

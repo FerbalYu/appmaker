@@ -5,7 +5,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { AgentDispatcher } from './agents/dispatcher.js';
-import { ClaudeCodeAdapter } from './agents/claude-code.js';
+import { NativeCoderAdapter } from './agents/native-coder.js';
 import { MinimaxMCPAdapter } from './agents/minimax-mcp.js';
 import { config } from '../config/index.js';
 
@@ -16,11 +16,11 @@ export class Planner {
 
     this.dispatcher = new AgentDispatcher({
       ...this.config.dispatcher,
-      ...(this.config.agents?.opencode || {}),
-      ...(this.config.agents?.['claude-code'] || {})
+      ...(this.config.agents?.['native-reviewer'] || {}),
+      ...(this.config.agents?.['native-coder'] || {})
     });
-    this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
-      ...this.config.agents?.['claude-code'],
+    this.dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
+      ...this.config.agents?.['native-coder'],
       ...configOverrides
     }));
     this.dispatcher.registerAgent('minimax-mcp', new MinimaxMCPAdapter({
@@ -53,7 +53,7 @@ ${requirement}
       "description": "具体的开发阶段或实现任务",
       "type": "architect",
       "dependencies": [],
-      "agent": "claude-code",
+      "agent": "native-coder",
       "estimated_tokens": 2000,
       "estimated_minutes": 15
     }
@@ -70,12 +70,12 @@ ${requirement}
     }, 2000);
 
     try {
-      const plannerAgentName = this.config.planner_agent || 'claude-code';
+      const plannerAgentName = this.config.planner_agent || 'native-coder';
 
       const agentResult = await this.dispatcher.dispatch({
         id: 'plan_analysis',
         type: 'analysis',
-        description: plannerAgentName === 'claude-code' ? prompt : requirement,
+        description: plannerAgentName === 'native-coder' ? prompt : requirement,
         agent: plannerAgentName,
         context: { project_root: this.projectRoot }
       });
@@ -85,6 +85,7 @@ ${requirement}
 
       const content = this._extractJSON(
         agentResult.output?.raw_output ||
+        agentResult.output?.summary ||
         agentResult.output?.review_report ||
         agentResult.result ||
         String(agentResult)
@@ -184,19 +185,19 @@ ${requirement}
     let taskId = 1;
     const features = analysis.features.length > 0 ? analysis.features : ['基础功能'];
 
-    tasks.push({ id: `t${taskId++}`, description: '初始化项目结构和技术栈', type: 'architect', dependencies: [], agent: 'claude-code', estimated_tokens: 2000, estimated_minutes: 10 });
-    tasks.push({ id: `t${taskId++}`, description: '搭建基础框架和模块结构', type: 'create', dependencies: [`t${taskId - 2}`], agent: 'claude-code', estimated_tokens: 3000, estimated_minutes: 15 });
+    tasks.push({ id: `t${taskId++}`, description: '初始化项目结构和技术栈', type: 'architect', dependencies: [], agent: 'native-coder', estimated_tokens: 2000, estimated_minutes: 10 });
+    tasks.push({ id: `t${taskId++}`, description: '搭建基础框架和模块结构', type: 'create', dependencies: [`t${taskId - 2}`], agent: 'native-coder', estimated_tokens: 3000, estimated_minutes: 15 });
 
     const featureTaskIds = [];
     for (const feature of features) {
       const currentId = `t${taskId++}`;
       featureTaskIds.push(currentId);
-      tasks.push({ id: currentId, description: `实现${feature}功能`, type: 'create', dependencies: [`t${taskId - 2}`], agent: 'claude-code', estimated_tokens: 2500, estimated_minutes: 12 });
+      tasks.push({ id: currentId, description: `实现${feature}功能`, type: 'create', dependencies: [`t${taskId - 2}`], agent: 'native-coder', estimated_tokens: 2500, estimated_minutes: 12 });
     }
 
-    tasks.push({ id: `t${taskId++}`, description: '功能集成和联调测试', type: 'integrate', dependencies: featureTaskIds, agent: 'claude-code', estimated_tokens: 2000, estimated_minutes: 10 });
-    tasks.push({ id: `t${taskId++}`, description: '部署配置和性能优化', type: 'create', dependencies: [`t${taskId - 2}`], agent: 'claude-code', estimated_tokens: 1500, estimated_minutes: 8 });
-    tasks.push({ id: `t${taskId++}`, description: '编写测试和文档', type: 'test', dependencies: [`t${taskId - 2}`], agent: 'claude-code', estimated_tokens: 1000, estimated_minutes: 5 });
+    tasks.push({ id: `t${taskId++}`, description: '功能集成和联调测试', type: 'integrate', dependencies: featureTaskIds, agent: 'native-coder', estimated_tokens: 2000, estimated_minutes: 10 });
+    tasks.push({ id: `t${taskId++}`, description: '部署配置和性能优化', type: 'create', dependencies: [`t${taskId - 2}`], agent: 'native-coder', estimated_tokens: 1500, estimated_minutes: 8 });
+    tasks.push({ id: `t${taskId++}`, description: '编写测试和文档', type: 'test', dependencies: [`t${taskId - 2}`], agent: 'native-coder', estimated_tokens: 1000, estimated_minutes: 5 });
 
     return tasks;
   }

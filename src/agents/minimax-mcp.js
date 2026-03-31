@@ -56,7 +56,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
   async healthCheck() {
     if (!this.apiKey) return false;
     try {
-      const res = await fetch(`${this.apiHost}/v1/text/chatcompletion_pro`, {
+      const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
@@ -127,7 +127,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
       // 对话大循环，最多 5 次 tool calls
       for (let i = 0; i < 5; i++) {
-        const res = await fetch(`${this.apiHost}/v1/text/chatcompletion_pro`, {
+        const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -148,7 +148,19 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         }
 
         const data = await res.json();
+        
+        if (!data?.choices || data.choices.length === 0) {
+          console.warn(`[${this.name}] API 返回数据缺少 choices 字段，原始响应:`, JSON.stringify(data).substring(0, 500));
+          break;
+        }
+        
         const choice = data.choices[0];
+        
+        if (!choice?.message) {
+          console.warn(`[${this.name}] choice 缺少 message 字段`);
+          break;
+        }
+        
         const message = choice.message;
         messages.push(message);
 

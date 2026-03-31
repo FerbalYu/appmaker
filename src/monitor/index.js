@@ -51,6 +51,7 @@ export class ProgressMonitor {
         try {
           this.server = Bun.serve({
             port,
+            idleTimeout: 0,
             fetch: (req) => this._handleRequest(req),
             error: (err) => {
               if (err.code === 'EADDRINUSE') {
