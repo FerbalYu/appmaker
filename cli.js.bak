@@ -122,7 +122,7 @@ async function cmdPlan(requirement) {
 
     // 保存计划
     const filename = `plan_${Date.now()}.json`;
-    const { filepath } = await planner.savePlan(plan, filename);
+    await planner.savePlan(plan, filename);
 
     console.log('\n生成的计划:');
     console.log(JSON.stringify(plan, null, 2));
