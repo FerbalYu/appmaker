@@ -117,114 +117,38 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
   }
 
   /**
-   * 通过 CLI 执行评审
+   * 通过 CLI (ACP) 执行评审
    * @private
    */
   async _reviewViaCLI(prompt, context) {
-    const { spawn } = require('child_process');
-    const args = [prompt];
+    const { ACPClient } = require('./acp-client');
 
-    if (context && context.project_root) {
-      args.push('--project', context.project_root);
-    }
+    const path = require('path');
 
-    return new Promise((resolve, reject) => {
-      let stdoutData = '';
-      let stderrData = '';
+    const acpBridgePath = path.join(__dirname, 'acp-bridges', 'opencode-bridge.js');
+    console.log(`[opencode] Starting ACP Bridge at: ${acpBridgePath}`);
 
-      let isWin = process.platform === 'win32';
-      let cmdToRun = this.cliPath;
-      let finalArgs = [...args];
-      
-      if (isWin) {
-         try {
-           const { execSync } = require('child_process');
-           const fs = require('fs');
-           const path = require('path');
-           const cmdOutput = execSync(`where ${this.cliPath}.cmd 2>NUL`).toString().trim();
-           if (cmdOutput) {
-             const binPath = cmdOutput.split('\n')[0].trim();
-             const content = fs.readFileSync(binPath, 'utf-8');
-             const match = content.match(/"(%dp0%[^"]+\.js)"/i) || content.match(/"(%~dp0[^"]+\.js)"/i);
-             if (match) {
-               const jsScript = match[1].replace(/%~?dp0%?\\?/, path.dirname(binPath) + path.sep);
-               cmdToRun = process.execPath;
-               finalArgs = [jsScript, ...args];
-             } else {
-               cmdToRun = binPath;
-             }
-           } else {
-             cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
-           }
-         } catch(e) {
-           cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
-         }
-      }
+    const client = new ACPClient(process.execPath, [acpBridgePath], {
+       cwd: context.project_root || process.cwd()
+    }, 'opencode-acp');
 
-      const child = require('child_process').spawn(cmdToRun, finalArgs, {
-        cwd: (context && context.project_root) ? context.project_root : process.cwd(),
-        shell: isWin && cmdToRun !== process.execPath, 
-        env: process.env
-      });
-
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error(`OpenCode CLI execution timeout (${this.timeout}ms)`));
-      }, this.timeout);
-
-      child.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        stdoutData += chunk;
-        const lines = chunk.split('\n');
-        for (let line of lines) {
-           if (line.trim()) {
-              process.stdout.write(`\r\x1b[36m[opencode] ${line.trim()}\x1b[0m\n`);
-           }
-        }
-      });
-
-      child.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        stderrData += chunk;
-        const lines = chunk.split('\n');
-        for (let line of lines) {
-           if (line.trim()) {
-              process.stdout.write(`\r\x1b[31m[opencode err] ${line.trim()}\x1b[0m\n`);
-           }
-        }
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        if (code !== 0 && !stdoutData) {
-          return reject(new Error(`Command failed: ${stderrData}`));
-        }
-        
-        try {
-          const result = this._extractJSON(stdoutData);
-          resolve(JSON.parse(result));
-        } catch(e) {
-          resolve({ output: stdoutData, success: true });
-        }
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+    client.on('stderr', (data) => {
+       process.stderr.write(`[opencode-acp err] ${data}`);
     });
-  }
 
-  _extractJSON(output) {
-    if (typeof output !== 'string') return JSON.stringify(output);
-    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) return codeBlockMatch[1].trim();
-    const start = output.indexOf('{');
-    const end = output.lastIndexOf('}');
-    if (start !== -1 && end !== -1 && end > start) {
-      return output.substring(start, end + 1);
+    client.on('notification', (msg) => {
+       if (msg.method === 'agent/stderr') {
+          process.stderr.write(`[opencode-acp remote stderr] ${msg.params.data}`);
+       }
+    });
+
+    try {
+      await client.start(10000); // 10秒启动超时
+      const result = await client.request('review', { prompt, context, timeout: this.timeout }, this.timeout + 5000);
+      return result;
+    } finally {
+      client.stop();
     }
-    return output;
   }
 
   /**
@@ -302,11 +226,16 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
   async healthCheck() {
     try {
       if (this.config.use_cli) {
-        const { exec } = require('child_process');
-        const { promisify } = require('util');
-        const execAsync = promisify(exec);
-        await execAsync(`${this.cliPath} --version`, { timeout: 5000 });
-        return true;
+        const { ACPClient } = require('./acp-client');
+        const path = require('path');
+        const acpBridgePath = path.join(__dirname, 'acp-bridges', 'opencode-bridge.js');
+        const client = new ACPClient(process.execPath, [acpBridgePath], {}, 'opencode-acp-hc');
+        try {
+           await client.start(5000);
+           return true;
+        } finally {
+           client.stop();
+        }
       } else {
         const http = require('http');
         return new Promise((resolve) => {

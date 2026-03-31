@@ -39,7 +39,7 @@ class ExecutionEngine extends EventEmitter {
       use_cli: config.claude_code_use_cli ?? true,
       cli_path: config.claude_code_cli_path || 'claude',
       api_endpoint: config.claude_code_api_endpoint || 'http://localhost:8080',
-      timeout: config.claude_code_timeout || 900000, // 15 分钟
+      timeout: config.claude_code_timeout || 300000, // 300 秒 (5分钟)
       model: config.claude_model || 'claude-opus-4-6'
     }));
   }

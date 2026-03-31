@@ -22,7 +22,7 @@ class ClaudeCodeAdapter extends AgentAdapter {
     super({ ...CLAUDE_CODE_CONFIG, ...config });
     this.cliPath = config.cli_path || 'claude';
     this.apiEndpoint = config.api_endpoint || 'http://localhost:8080';
-    this.timeout = config.timeout || 300000; // 5 分钟
+    this.timeout = config.timeout || 120000; // 120 秒
     this.maxRetries = config.max_retries || 3;
     this.model = config.model || 'claude-opus-4-6';
   }
@@ -69,132 +69,44 @@ class ClaudeCodeAdapter extends AgentAdapter {
   }
 
   /**
-   * 通过 CLI 执行
+   * 通过 CLI (ACP) 执行
    * @private
    */
   async _executeViaCLI(prompt, context) {
-    const { spawn } = require('child_process');
+    const { ACPClient } = require('./acp-client');
+    const path = require('path');
 
-    const args = [
-      '--print',
-      prompt
-    ];
-    
-    // claude 不支持 --project, --checkpoint 和 --noninteractive
+    const acpBridgePath = path.join(__dirname, 'acp-bridges', 'claude-bridge.js');
+    console.log(`[claude-code] Starting ACP Bridge at: ${acpBridgePath}`);
 
-    return new Promise((resolve, reject) => {
-      let isWin = process.platform === 'win32';
-      let cmdToRun = this.cliPath;
-      let finalArgs = [...args];
-      
-      if (isWin) {
-         try {
-           const { execSync } = require('child_process');
-           const fs = require('fs');
-           const path = require('path');
-           const cmdOutput = execSync(`where ${this.cliPath}.cmd 2>NUL`).toString().trim();
-           if (cmdOutput) {
-             const binPath = cmdOutput.split('\n')[0].trim();
-             const content = fs.readFileSync(binPath, 'utf-8');
-             const match = content.match(/"(%dp0%[^"]+\.js)"/i) || content.match(/"(%~dp0[^"]+\.js)"/i);
-             if (match) {
-               const jsScript = match[1].replace(/%~?dp0%?\\?/, path.dirname(binPath) + path.sep);
-               cmdToRun = process.execPath;
-               finalArgs = [jsScript, ...args];
-             } else {
-               cmdToRun = binPath;
-             }
-           } else {
-             cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
-           }
-         } catch(e) {
-           cmdToRun = this.cliPath.endsWith('.cmd') ? this.cliPath : `${this.cliPath}.cmd`;
-         }
-      }
+    // 使用完整路径避免空格问题
+    const nodePath = process.execPath;
+    console.log(`[claude-code] Using node: ${nodePath}`);
 
-      // 绕过嵌套检查：在 Claude Code 内运行时需要
-      const child = require('child_process').spawn(cmdToRun, finalArgs, {
-        cwd: context.project_root || process.cwd(),
-        timeout: this.timeout,
-        shell: isWin && cmdToRun !== process.execPath,
-        env: { ...process.env, CLAUDECODE: '' }
-      });
+    const client = new ACPClient(nodePath, [acpBridgePath], {
+       cwd: context.project_root || process.cwd()
+    }, 'claude-acp');
 
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        stdout += chunk;
-        const lines = chunk.split('\n');
-        for (let line of lines) {
-           if (line.trim()) {
-              process.stdout.write(`\r\x1b[90m[claude] ${line.trim()}\x1b[0m\n`);
-           }
-        }
-      });
-
-      child.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        stderr += chunk;
-        const lines = chunk.split('\n');
-        for (let line of lines) {
-           if (line.trim()) {
-              process.stdout.write(`\r\x1b[31m[claude err] ${line.trim()}\x1b[0m\n`);
-           }
-        }
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        if (code !== 0 && code !== null) {
-          reject(new Error(`claude-code exited with code ${code}\nStderr: ${stderr}`));
-          return;
-        }
-
-        try {
-          const content = this._extractJSON(stdout);
-          resolve(JSON.parse(content));
-        } catch (error) {
-          resolve({ output: stdout, format: 'text', success: true });
-        }
-      });
-
-      child.on('error', (error) => {
-        clearTimeout(timer);
-        reject(new Error(`Failed to start claude-code: ${error.message}`));
-      });
-
-      // 超时处理
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error('claude-code execution timeout'));
-      }, this.timeout);
+    client.on('stderr', (data) => {
+       process.stderr.write(`[claude-acp err] ${data}`);
     });
-  }
 
-  _extractJSON(output) {
-    if (typeof output !== 'string') return JSON.stringify(output);
-    
-    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    for (const match of codeBlocks) {
-      try {
-        const parsed = JSON.parse(match[1].trim());
-        return JSON.stringify(parsed);
-      } catch (e) { /* ignore and continue searching */ }
+    client.on('notification', (msg) => {
+       if (msg.method === 'agent/stderr') {
+         process.stderr.write(`[claude-acp remote stderr] ${msg.params.data}`);
+       }
+    });
+
+    try {
+      console.log('[claude-code] Waiting for ACP Bridge to start...');
+      await client.start(30000); // 30秒启动超时
+      console.log('[claude-code] ACP Bridge started, sending execute...');
+      const result = await client.request('execute', { prompt, context, timeout: this.timeout }, this.timeout + 5000);
+      console.log('[claude-code] Execute completed!');
+      return result;
+    } finally {
+      client.stop();
     }
-    
-    const startObj = output.indexOf('{');
-    const endObj = output.lastIndexOf('}');
-    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
-      const candidate = output.substring(startObj, endObj + 1);
-      try {
-        const parsed = JSON.parse(candidate);
-        return JSON.stringify(parsed);
-      } catch (e) { /* ignore */ }
-    }
-    
-    return output;
   }
 
   /**
@@ -257,25 +169,14 @@ class ClaudeCodeAdapter extends AgentAdapter {
    * @private
    */
   _buildPrompt(task) {
-    let prompt = task.description;
+    let prompt = `任务：${task.description}\n\n请直接执行任务，不要询问确认。`;
 
     if (task.files && task.files.length > 0) {
-      prompt += `\n\n## 相关文件\n请分析以下文件：\n${task.files.map(f => `- ${f}`).join('\n')}`;
+      prompt += `\n\n相关文件：${task.files.map(f => `${f}`).join(', ')}`;
     }
 
-    if (task.context && task.context.architecture_rules) {
-      prompt += `\n\n## 架构规则\n${task.context.architecture_rules}`;
-    }
-
-    if (task.context && task.context.quality_rules) {
-      prompt += `\n\n## 质量要求\n${task.context.quality_rules}`;
-    }
-
-    if (task.context && task.context.milestone) {
-      prompt += `\n\n## 当前里程碑\n${task.context.milestone}`;
-    }
-
-    prompt += `\n\n## 输出要求\n请以 JSON 格式返回执行结果，包含：files_created, files_modified, summary, tests_run`;
+    prompt += `\n\n## 输出要求
+请以 JSON 格式返回，包含：files_created（数组）, files_modified（数组）, summary（字符串总结）, tests_run（布尔值）`;
 
     return prompt;
   }
@@ -311,11 +212,16 @@ class ClaudeCodeAdapter extends AgentAdapter {
   async healthCheck() {
     try {
       if (this.config.use_cli) {
-        const { exec } = require('child_process');
-        const { promisify } = require('util');
-        const execAsync = promisify(exec);
-        await execAsync(`${this.cliPath} --version`);
-        return true;
+        const { ACPClient } = require('./acp-client');
+        const path = require('path');
+        const acpBridgePath = path.join(__dirname, 'acp-bridges', 'claude-bridge.js');
+        const client = new ACPClient(process.execPath, [acpBridgePath], {}, 'claude-acp-hc');
+        try {
+           await client.start(5000);
+           return true;
+        } finally {
+           client.stop();
+        }
       } else {
         const http = require('http');
         return new Promise((resolve) => {
