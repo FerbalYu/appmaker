@@ -1,0 +1,30 @@
+{
+  "agents": {
+    "claude-code": {
+      "enabled": true,
+      "description": "编程 Agent - 负责写代码",
+      "use_cli": true,
+      "cli_path": "claude",
+      "api_endpoint": "http://localhost:8080",
+      "timeout_ms": 300000,
+      "max_retries": 3,
+      "model": "claude-opus-4-6"
+    },
+    "opencode": {
+      "enabled": true,
+      "description": "评审 Agent - 负责毒舌点评",
+      "use_cli": true,
+      "cli_path": "opencode",
+      "api_endpoint": "http://localhost:3000",
+      "timeout_ms": 60000
+    }
+  },
+  "dispatcher": {
+    "max_concurrent_agents": 3,
+    "default_agent": "claude-code",
+    "checkpoint": null
+  },
+  "task_defaults": {
+    "retry_on_failure": true
+  }
+}

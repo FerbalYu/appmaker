@@ -1,0 +1,55 @@
+{
+  "id": "cp_1774939538238",
+  "name": "milestone_m1",
+  "timestamp": "2026-03-31T06:45:38.238Z",
+  "tasks": {
+    "t1": {
+      "status": "failed",
+      "result": {
+        "task_id": "t1",
+        "status": "failed",
+        "phase": "code",
+        "error": {
+          "type": "Error",
+          "message": "claude-code exited with code 1\nStderr: error: unknown option '--prompt'\n(Did you mean one of --from-pr, --print?)\n",
+          "stack": "Error: claude-code exited with code 1\nStderr: error: unknown option '--prompt'\n(Did you mean one of --from-pr, --print?)\n\n    at ChildProcess.<anonymous> (D:\\workflow\\appmaker\\src\\agents\\claude-code.js:118:18)\n    at ChildProcess.emit (node:events:508:28)\n    at maybeClose (node:internal/child_process:1101:16)\n    at ChildProcess._handle.onexit (node:internal/child_process:305:5)"
+        }
+      }
+    },
+    "t2": {
+      "status": "blocked"
+    }
+  },
+  "logs": [
+    {
+      "timestamp": "2026-03-31T06:45:30.237Z",
+      "level": "INFO",
+      "message": "开始执行计划: 做一个简单的待办事项Web应用"
+    },
+    {
+      "timestamp": "2026-03-31T06:45:30.238Z",
+      "level": "INFO",
+      "message": "总任务数: 6"
+    },
+    {
+      "timestamp": "2026-03-31T06:45:30.238Z",
+      "level": "INFO",
+      "message": "\n=== 里程碑: 基础框架 ==="
+    },
+    {
+      "timestamp": "2026-03-31T06:45:30.238Z",
+      "level": "INFO",
+      "message": "\n[t1] 开始: 初始化项目结构和技术栈"
+    },
+    {
+      "timestamp": "2026-03-31T06:45:30.238Z",
+      "level": "INFO",
+      "message": "[t1] claude-code 编程中..."
+    },
+    {
+      "timestamp": "2026-03-31T06:45:38.237Z",
+      "level": "ERROR",
+      "message": "[t1] claude-code 执行失败"
+    }
+  ]
+}

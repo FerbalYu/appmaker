@@ -1,0 +1,109 @@
+{
+  "plan_id": "plan_1774939166831",
+  "created_at": "2026-03-31T06:39:26.831Z",
+  "requirement": "做一个简单计算器网页",
+  "project": {
+    "name": "做一个简单计算器网页",
+    "description": "做一个简单计算器网页"
+  },
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "基础框架",
+      "tasks": [
+        "t1",
+        "t2"
+      ],
+      "phase": 1
+    },
+    {
+      "id": "m2",
+      "name": "功能开发",
+      "tasks": [
+        "t3",
+        "t4"
+      ],
+      "phase": 2
+    },
+    {
+      "id": "m4",
+      "name": "上线准备",
+      "tasks": [
+        "t5",
+        "t6"
+      ],
+      "phase": 4
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "description": "初始化项目结构和技术栈",
+      "type": "architect",
+      "dependencies": [],
+      "agent": "claude-code",
+      "estimated_tokens": 2000,
+      "estimated_minutes": 10
+    },
+    {
+      "id": "t2",
+      "description": "搭建基础框架和模块结构",
+      "type": "create",
+      "dependencies": [
+        "t1"
+      ],
+      "agent": "claude-code",
+      "estimated_tokens": 3000,
+      "estimated_minutes": 15
+    },
+    {
+      "id": "t3",
+      "description": "实现基础功能功能",
+      "type": "create",
+      "dependencies": [
+        "t2"
+      ],
+      "agent": "claude-code",
+      "estimated_tokens": 2500,
+      "estimated_minutes": 12
+    },
+    {
+      "id": "t4",
+      "description": "功能集成和联调测试",
+      "type": "integrate",
+      "dependencies": [
+        "t4"
+      ],
+      "agent": "claude-code",
+      "estimated_tokens": 2000,
+      "estimated_minutes": 10
+    },
+    {
+      "id": "t5",
+      "description": "部署配置和性能优化",
+      "type": "create",
+      "dependencies": [
+        "t4"
+      ],
+      "agent": "claude-code",
+      "estimated_tokens": 1500,
+      "estimated_minutes": 8
+    },
+    {
+      "id": "t6",
+      "description": "编写测试和文档",
+      "type": "test",
+      "dependencies": [
+        "t5"
+      ],
+      "agent": "claude-code",
+      "estimated_tokens": 1000,
+      "estimated_minutes": 5
+    }
+  ],
+  "metadata": {
+    "total_tasks": 6,
+    "estimated_tokens": 12000,
+    "total_minutes_estimate": 60
+  }
+}
