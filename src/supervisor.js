@@ -1,7 +1,7 @@
-const { Logger } = require('./logger');
-const { SelfCorrector } = require('./corrector');
+import { Logger } from './logger.js';
+import { SelfCorrector } from './corrector.js';
 
-class Supervisor {
+export class Supervisor {
   constructor(engine, config = {}) {
     this.engine = engine;
     this.logger = new Logger(config.logger);
@@ -12,13 +12,12 @@ class Supervisor {
       errors: [],
       startTime: Date.now()
     };
-    
+
     this.thresholds = config.thresholds || {
       maxTokens: 100000,
       maxErrors: 5
     };
 
-    // 订阅 Engine 事件
     engine.on('task:start', (data) => this._onTaskStart(data));
     engine.on('task:done', (data) => this._onTaskDone(data));
     engine.on('task:error', (data) => this._onTaskError(data));
@@ -37,8 +36,7 @@ class Supervisor {
     t.end = Date.now();
     t.duration = t.end - t.start;
     t.status = result.status;
-    
-    // Accumulate tokens
+
     const tokens = result.code_result?.metrics?.tokens_used || 0;
     this.metrics.tokens.claude += tokens;
     this.metrics.tokens.total += tokens;
@@ -50,8 +48,6 @@ class Supervisor {
   _onTaskError({ task, result, phase }) {
     this.metrics.errors.push({ task: task.id, phase, error: result.error, time: Date.now() });
     this.logger.error('quality', `error_${task.id}.log`, `Task error`, { error: result.error, phase });
-    
-    // 触发修正 (接入 SelfCorrector 逻辑入口)
     this.triggerCorrection('error', { task, error: result.error });
   }
 
@@ -78,11 +74,11 @@ class Supervisor {
   assessRisk() {
     if (this.metrics.tokens.total > this.thresholds.maxTokens) {
       this.logger.warn(null, 'supervisor.log', `[RISK] Token usage exceeds threshold! (${this.metrics.tokens.total} > ${this.thresholds.maxTokens})`);
-      this.engine.halt = true; // Stop accepting new tasks
+      this.engine.halt = true;
     }
     if (this.metrics.errors.length > this.thresholds.maxErrors) {
       this.logger.error(null, 'supervisor.log', `[RISK] Too many errors! (${this.metrics.errors.length}) Execution may be compromised.`);
-      this.engine.halt = true; // Stop accepting new tasks
+      this.engine.halt = true;
     }
   }
 
@@ -91,5 +87,3 @@ class Supervisor {
     await this.corrector.correct(reason, context);
   }
 }
-
-module.exports = { Supervisor };

@@ -1,16 +1,17 @@
-const http = require('http');
-const path = require('path');
-const fs = require('fs');
+import path from 'path';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
-class ProgressMonitor {
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export class ProgressMonitor {
   constructor(engine, port = 8088) {
     this.engine = engine;
     this.port = port;
     this.clients = new Set();
     this.server = null;
-    this.history = []; // Keep a short history to initialize new clients
+    this.history = [];
 
-    // Hook into engine events
     this._hookEvents();
   }
 
@@ -32,82 +33,106 @@ class ProgressMonitor {
   }
 
   _broadcast(event, data) {
-    // Keep a slim history representation for new connections
     const payload = JSON.stringify({ event, data });
-    
-    // Simplistic history pruning to stop memory leaks
+
     if (this.history.length > 100) this.history.shift();
     this.history.push({ event, data });
 
-    for (const client of this.clients) {
-      client.write(`data: ${payload}\n\n`);
+    for (const { controller } of this.clients) {
+      try {
+        controller.enqueue(`data: ${payload}\n\n`);
+      } catch { /* client disconnected */ }
     }
   }
 
   start() {
-    this.server = http.createServer((req, res) => {
-      if (req.url === '/events') {
-        res.writeHead(200, {
+    return new Promise((resolve, reject) => {
+      const tryListen = (port) => {
+        try {
+          this.server = Bun.serve({
+            port,
+            fetch: (req) => this._handleRequest(req),
+            error: (err) => {
+              if (err.code === 'EADDRINUSE') {
+                // Port busy, try next
+                this.server?.stop();
+                tryListen(port + 1);
+              } else {
+                reject(err);
+              }
+            }
+          });
+          this.port = this.server.port;
+          resolve(`http://localhost:${this.port}`);
+        } catch (err) {
+          if (err.code === 'EADDRINUSE') {
+            tryListen(port + 1);
+          } else {
+            reject(err);
+          }
+        }
+      };
+
+      tryListen(this.port);
+    });
+  }
+
+  _handleRequest(req) {
+    const url = new URL(req.url);
+
+    // SSE 事件流
+    if (url.pathname === '/events') {
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      // 发送历史事件给新连接者
+      const clientRef = { controller: { enqueue: (chunk) => writer.write(encoder.encode(chunk)) } };
+      this.clients.add(clientRef);
+
+      // 推送历史
+      for (const item of this.history) {
+        writer.write(encoder.encode(`data: ${JSON.stringify(item)}\n\n`));
+      }
+
+      // 当客户端断开时清理
+      req.signal?.addEventListener('abort', () => {
+        this.clients.delete(clientRef);
+        writer.close().catch(() => {});
+      });
+
+      return new Response(readable, {
+        headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
           'Access-Control-Allow-Origin': '*'
-        });
-        
-        // Send previous events to synchronize the new client
-        for (const historyItem of this.history) {
-          res.write(`data: ${JSON.stringify(historyItem)}\n\n`);
-        }
-
-        this.clients.add(res);
-        req.on('close', () => {
-          this.clients.delete(res);
-        });
-        return;
-      }
-
-      // 静态服务
-      if (req.url === '/' || req.url === '/index.html') {
-        const filePath = path.join(__dirname, 'public', 'index.html');
-        fs.readFile(filePath, (err, content) => {
-          if (err) {
-            res.writeHead(500);
-            res.end('Error loading dashboard');
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(content);
-        });
-        return;
-      }
-
-      res.writeHead(404);
-      res.end();
-    });
-
-    return new Promise((resolve) => {
-      this.server.listen(this.port, () => {
-        resolve(`http://localhost:${this.port}`);
-      });
-      // 避免端口冲突自动寻址
-      this.server.on('error', (e) => {
-        if (e.code === 'EADDRINUSE') {
-          this.port++;
-          this.server.listen(this.port);
         }
       });
-    });
+    }
+
+    // 静态 HTML
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      try {
+        const content = readFileSync(path.join(__dirname, 'public', 'index.html'));
+        return new Response(content, {
+          headers: { 'Content-Type': 'text/html' }
+        });
+      } catch {
+        return new Response('Error loading dashboard', { status: 500 });
+      }
+    }
+
+    return new Response(null, { status: 404 });
   }
 
   stop() {
     if (this.server) {
-      this.server.close();
+      this.server.stop();
     }
-    for (const client of this.clients) {
-      client.end();
+    for (const { controller } of this.clients) {
+      try { controller.enqueue(''); } catch { /* ignore */ }
     }
     this.clients.clear();
   }
 }
-
-module.exports = { ProgressMonitor };

@@ -1,0 +1,15 @@
+# Bun 配置文件
+# https://bun.sh/docs/runtime/bunfig
+
+[install]
+# 生产依赖优化
+production = false
+
+[test]
+# 测试超时（毫秒）
+timeout = 30000
+# 匹配测试文件
+include = ["tests/**/*.test.js", "tests/**/*.spec.js"]
+
+[run]
+# Bun 自动加载 .env，无需额外配置

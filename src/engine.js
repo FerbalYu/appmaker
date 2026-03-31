@@ -3,14 +3,17 @@
  * 执行双 Agent 协作流程：claude-code 编程 + opencode 毒舌点评
  */
 
-const { AgentDispatcher } = require('./agents/dispatcher');
-const { OpenCodeAdapter } = require('./agents/opencode');
-const { ClaudeCodeAdapter } = require('./agents/claude-code');
-const fs = require('fs').promises;
-const path = require('path');
-const { EventEmitter } = require('events');
+import { AgentDispatcher } from './agents/dispatcher.js';
+import { OpenCodeAdapter } from './agents/opencode.js';
+import { ClaudeCodeAdapter } from './agents/claude-code.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
 
-class ExecutionEngine extends EventEmitter {
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export class ExecutionEngine extends EventEmitter {
   constructor(config = {}) {
     super();
     this.config = config;
@@ -20,33 +23,31 @@ class ExecutionEngine extends EventEmitter {
     this.maxReviewCycles = config.max_review_cycles || 3;
     this.projectRoot = config.project_root || process.cwd();
 
-    // 创建 dispatcher 实例
     this.dispatcher = new AgentDispatcher({
       opencode_use_cli: config.opencode_use_cli ?? true,
       opencode_cli_path: config.opencode_cli_path || 'opencode',
       claude_code_use_cli: config.claude_code_use_cli ?? true,
       claude_code_cli_path: config.claude_code_cli_path || 'claude'
     });
-    
-    // 注册 Agent
+
     this.dispatcher.registerAgent('opencode', new OpenCodeAdapter({
       use_cli: config.opencode_use_cli ?? true,
       cli_path: config.opencode_cli_path || 'opencode',
       api_endpoint: config.opencode_api_endpoint || 'http://localhost:3000',
-      timeout: config.opencode_timeout || 300000 // 5 分钟
+      timeout: config.opencode_timeout || 300000
     }));
     this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
       use_cli: config.claude_code_use_cli ?? true,
       cli_path: config.claude_code_cli_path || 'claude',
       api_endpoint: config.claude_code_api_endpoint || 'http://localhost:8080',
-      timeout: config.claude_code_timeout || 300000, // 300 秒 (5分钟)
+      timeout: config.claude_code_timeout || 300000,
       model: config.claude_model || 'claude-opus-4-6'
     }));
   }
 
   /**
    * 执行任务（编程 + 评审循环）
-   * @param {Object} plan - 来自 planning.skill 的执行计划
+   * @param {Object} plan
    * @returns {Promise<Object>}
    */
   async execute(plan) {
@@ -64,27 +65,24 @@ class ExecutionEngine extends EventEmitter {
       const milestoneTasks = milestone.tasks
         .map(id => plan.tasks.find(t => t.id === id))
         .filter(t => {
-          if (!t) this._log('WARN', `任务未找到`);
+          if (!t) this._log('WARN', '任务未找到');
           return Boolean(t);
         });
 
       const scheduleTask = async (task) => {
-        // 检查点恢复的支持：已完成的任务直接跳过
         const existing = this.tasks.get(task.id);
-        if (existing && existing.status === 'done') {
-          return existing.result;
-        }
+        if (existing?.status === 'done') return existing.result;
 
-        if (task.dependencies && task.dependencies.length > 0) {
+        if (task.dependencies?.length > 0) {
           const depResults = await Promise.all(
             task.dependencies.map(depId => {
               if (executionPromises.has(depId)) return executionPromises.get(depId);
               const pastState = this.tasks.get(depId);
-              if (pastState) return Promise.resolve(pastState.result || {status: pastState.status});
-              return Promise.resolve({status: 'done'});
+              if (pastState) return Promise.resolve(pastState.result || { status: pastState.status });
+              return Promise.resolve({ status: 'done' });
             })
           );
-          if (depResults.some(r => r && r.status !== 'done')) {
+          if (depResults.some(r => r?.status !== 'done')) {
             const blockedResult = { task_id: task.id, status: 'blocked' };
             this.tasks.set(task.id, { status: 'blocked', result: blockedResult });
             return blockedResult;
@@ -96,12 +94,9 @@ class ExecutionEngine extends EventEmitter {
           return { status: 'aborted' };
         }
 
-        // 执行任务
         const result = await this._executeTask(task, plan);
         results.push(result);
         this.tasks.set(task.id, { status: result.status, result });
-
-        // 进度报告
         this._reportProgress(task, result);
         return result;
       };
@@ -112,7 +107,6 @@ class ExecutionEngine extends EventEmitter {
 
       await Promise.all(executionPromises.values());
 
-      // 里程碑检查点
       await this._createCheckpoint(`milestone_${milestone.id}`);
       this.emit('milestone:done', { milestone, plan });
     }
@@ -141,9 +135,8 @@ class ExecutionEngine extends EventEmitter {
     let reviewResult;
     let cycle = 0;
 
-    // ===== 阶段 1: claude-code 编程 =====
+    // 阶段 1: claude-code 编程
     this._log('INFO', `[${task.id}] claude-code 编程中...`);
-
     try {
       codeResult = await this.dispatcher.dispatch({
         id: task.id,
@@ -154,42 +147,25 @@ class ExecutionEngine extends EventEmitter {
       });
     } catch (error) {
       this._log('ERROR', `[${task.id}] claude-code 执行失败: ${error.message}`);
-      return {
-        task_id: task.id,
-        status: 'failed',
-        phase: 'code',
-        error: error.message
-      };
+      return { task_id: task.id, status: 'failed', phase: 'code', error: error.message };
     }
 
     if (codeResult.status === 'failed' || codeResult.success === false) {
       this._log('ERROR', `[${task.id}] claude-code 执行失败`);
-      const errRes = {
-        task_id: task.id,
-        status: 'failed',
-        phase: 'code',
-        error: codeResult.error || codeResult.errors || 'Unknown error'
-      };
+      const errRes = { task_id: task.id, status: 'failed', phase: 'code', error: codeResult.error || codeResult.errors || 'Unknown error' };
       this.emit('task:error', { task, result: errRes });
       return errRes;
     }
 
-    // 检查是否有文件产出
     if (!codeResult.output?.files_created?.length && !codeResult.output?.files_modified?.length) {
       this._log('ERROR', `[${task.id}] claude-code 没有产出任何文件`);
-      return {
-        task_id: task.id,
-        status: 'failed',
-        phase: 'code',
-        error: 'No files produced'
-      };
+      return { task_id: task.id, status: 'failed', phase: 'code', error: 'No files produced' };
     }
 
     this._log('INFO', `[${task.id}] 编程完成，文件: ${codeResult.output?.files_created?.length || 0}`);
 
-    // ===== 阶段 2: opencode 毒舌点评 =====
+    // 阶段 2: opencode 毒舌点评
     this._log('INFO', `[${task.id}] opencode 毒舌点评中...`);
-
     try {
       reviewResult = await this.dispatcher.dispatch({
         id: `review_${task.id}`,
@@ -198,19 +174,13 @@ class ExecutionEngine extends EventEmitter {
         files: codeResult.output?.files_created || [],
         context
       });
-      // Emit the review pass automatically handled in supervisor
       this.emit('task:review', { task, result: reviewResult });
     } catch (error) {
       this._log('ERROR', `[${task.id}] opencode 评审失败: ${error.message}`);
-      return {
-        task_id: task.id,
-        status: 'failed',
-        phase: 'review',
-        error: error.message
-      };
+      return { task_id: task.id, status: 'failed', phase: 'review', error: error.message };
     }
 
-    // ===== 阶段 3: 修正循环 =====
+    // 阶段 3: 修正循环
     while (reviewResult.output?.verdict === 'FAIL' && cycle < this.maxReviewCycles) {
       cycle++;
       this._log('WARN', `[${task.id}] 评审 FAIL (第 ${cycle} 次修正)`);
@@ -218,7 +188,6 @@ class ExecutionEngine extends EventEmitter {
       const issues = reviewResult.output?.issues || [];
       this._logIssues(issues);
 
-      // 构建修正请求
       const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult);
 
       try {
@@ -231,16 +200,9 @@ class ExecutionEngine extends EventEmitter {
         });
       } catch (error) {
         this._log('ERROR', `[${task.id}] 修正失败: ${error.message}`);
-        return {
-          task_id: task.id,
-          status: 'failed',
-          phase: 'fix',
-          cycle,
-          error: error.message
-        };
+        return { task_id: task.id, status: 'failed', phase: 'fix', cycle, error: error.message };
       }
 
-      // 重新评审
       try {
         reviewResult = await this.dispatcher.dispatch({
           id: `review_${task.id}_${cycle}`,
@@ -251,17 +213,11 @@ class ExecutionEngine extends EventEmitter {
         });
       } catch (error) {
         this._log('ERROR', `[${task.id}] 重新评审失败`);
-        return {
-          task_id: task.id,
-          status: 'failed',
-          phase: 're-review',
-          cycle,
-          error: error.message
-        };
+        return { task_id: task.id, status: 'failed', phase: 're-review', cycle, error: error.message };
       }
     }
 
-    // ===== 结果判定 =====
+    // 结果判定
     if (reviewResult.output?.verdict === 'FAIL' && cycle >= this.maxReviewCycles) {
       this._log('ERROR', `[${task.id}] 超过最大修正次数，人工介入`);
       return {
@@ -274,7 +230,6 @@ class ExecutionEngine extends EventEmitter {
       };
     }
 
-    // 通过
     this._log('INFO', `[${task.id}] ✓ PASS (评分: ${reviewResult.output?.score || 0})`);
 
     const finalResult = {
@@ -290,10 +245,6 @@ class ExecutionEngine extends EventEmitter {
     return finalResult;
   }
 
-  /**
-   * 构建上下文
-   * @private
-   */
   async _buildContext(task, plan) {
     return {
       task_id: task.id,
@@ -304,24 +255,15 @@ class ExecutionEngine extends EventEmitter {
     };
   }
 
-  /**
-   * 加载规则文件
-   * @private
-   */
   async _loadRule(ruleName) {
     try {
       const rulePath = path.join(__dirname, '..', 'rules', `${ruleName}.rules.md`);
       return await fs.readFile(rulePath, 'utf-8');
     } catch {
-      // 忽略
+      return '';
     }
-    return '';
   }
 
-  /**
-   * 构建修正 prompt
-   * @private
-   */
   _buildFixPrompt(task, codeResult, reviewResult) {
     const issues = reviewResult.output?.issues || [];
     const issueList = issues.map((issue, i) =>
@@ -343,24 +285,6 @@ ${issueList}
 修改后确保代码通过质量检查。`;
   }
 
-  /**
-   * 检查是否有未满足的依赖
-   * @private
-   */
-  _hasUnmetDeps(task, results) {
-    if (!task.dependencies || task.dependencies.length === 0) {
-      return false;
-    }
-    return task.dependencies.some(depId => {
-      const result = results.find(r => r.task_id === depId);
-      return !result || result.status !== 'done';
-    });
-  }
-
-  /**
-   * 输出问题列表
-   * @private
-   */
   _logIssues(issues) {
     for (const issue of issues) {
       const icon = issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : '🟢';
@@ -368,58 +292,43 @@ ${issueList}
     }
   }
 
-  /**
-   * 报告进度
-   * @private
-   */
   _reportProgress(task, result) {
     const total = this.tasks.size;
     const done = [...this.tasks.values()].filter(t => t.status === 'done').length;
     const pct = Math.round((done / total) * 100);
-
     console.log(`\n[PROGRESS] ${done}/${total} (${pct}%)`);
     console.log(`  █${'█'.repeat(Math.floor(pct / 5))}${'░'.repeat(20 - Math.floor(pct / 5))}`);
   }
 
-  /**
-   * 创建检查点
-   * @private
-   */
   async _createCheckpoint(name) {
     const checkpoint = {
       id: `cp_${Date.now()}`,
       name,
       timestamp: new Date().toISOString(),
       tasks: Object.fromEntries(this.tasks),
-      logs: this.logs.slice(-100) // 只保留最近 100 条
+      logs: this.logs.slice(-100)
     };
     this.checkpoints.push(checkpoint);
 
-    // 保存到文件
     try {
-      await fs.mkdir(path.join(this.projectRoot, '.appmaker', 'checkpoints'), { recursive: true });
+      const dir = path.join(this.projectRoot, '.appmaker', 'checkpoints');
+      await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
-        path.join(this.projectRoot, '.appmaker', 'checkpoints', `${checkpoint.id}.json`),
+        path.join(dir, `${checkpoint.id}.json`),
         JSON.stringify(checkpoint, null, 2)
       );
-    } catch {
-      // 忽略
-    }
+    } catch { /* ignore */ }
 
     this._log('INFO', `检查点创建: ${name}`);
     return checkpoint.id;
   }
 
-  /**
-   * 生成总结
-   * @private
-   */
   _generateSummary(results, startTime) {
     const done = results.filter(r => r.status === 'done').length;
     const failed = results.filter(r => r.status === 'failed').length;
     const needsHuman = results.filter(r => r.status === 'needs_human').length;
     const totalCycles = results.reduce((sum, r) => sum + (r.cycles || 0), 0);
-    const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / results.length;
+    const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / (results.length || 1);
 
     return {
       total: results.length,
@@ -432,24 +341,12 @@ ${issueList}
     };
   }
 
-  /**
-   * 记录日志
-   * @private
-   */
   _log(level, message) {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      level,
-      message
-    };
+    const entry = { timestamp: new Date().toISOString(), level, message };
     this.logs.push(entry);
     console.log(`[${level}] ${message}`);
   }
 
-  /**
-   * 恢复执行
-   * @param {string} checkpointId
-   */
   async restore(checkpointId) {
     try {
       const cp = await fs.readFile(
@@ -467,5 +364,3 @@ ${issueList}
     }
   }
 }
-
-module.exports = { ExecutionEngine };

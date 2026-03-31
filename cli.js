@@ -1,24 +1,28 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * appMaker CLI
  * 执行双 Agent 协作流程
  *
  * 用法:
- *   node cli.js health                    检查 Agent
- *   node cli.js plan "需求描述"           生成计划
- *   node cli.js execute plan.json         执行计划文件
- *   node cli.js run "需求描述"            自动生成计划并执行（推荐）
+ *   bun cli.js health                    检查 Agent
+ *   bun cli.js plan "需求描述"           生成计划
+ *   bun cli.js execute plan.json         执行计划文件
+ *   bun cli.js run "需求描述"            自动生成计划并执行（推荐）
  */
 
-// 加载环境变量
-require('dotenv').config();
+// Bun 自动加载 .env，无需 dotenv
 
-const { createEngine, healthCheck } = require('./src/agents');
-const { Planner } = require('./src/planner');
-const { Supervisor } = require('./src/supervisor');
-const { ProgressMonitor } = require('./src/monitor');
-const fs = require('fs').promises;
-const path = require('path');
+import { createEngine, healthCheck } from './src/agents/index.js';
+import { Planner } from './src/planner.js';
+import { Supervisor } from './src/supervisor.js';
+import { ProgressMonitor } from './src/monitor/index.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createInterface } from 'readline';
+import { exec } from 'child_process';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -28,25 +32,20 @@ let executeDir = process.cwd();
 const dirIndex = args.indexOf('--dir');
 if (dirIndex !== -1 && args[dirIndex + 1]) {
   executeDir = path.resolve(process.cwd(), args[dirIndex + 1]);
-  // 确信这个参数没被其他逻辑使用后，可以在此处摘除
   args.splice(dirIndex, 2);
 }
 
 // 捕获未处理的 Promise 拒绝
-process.on('unhandledRejection', (error, promise) => {
+process.on('unhandledRejection', (error) => {
   console.error('\x1b[31mUnhandled Rejection:\x1b[0m', error?.message || error);
-  if (process.env.DEBUG) {
-    console.error(error.stack);
-  }
+  if (process.env.DEBUG) console.error(error.stack);
   process.exit(1);
 });
 
 // 捕获未捕获的同步异常
 process.on('uncaughtException', (error) => {
   console.error('\x1b[31mUnhandled Exception:\x1b[0m', error?.message || error);
-  if (process.env.DEBUG) {
-    console.error(error.stack);
-  }
+  if (process.env.DEBUG) console.error(error.stack);
   process.exit(1);
 });
 
@@ -85,9 +84,7 @@ async function main() {
     }
   } catch (error) {
     console.error('\x1b[31mFatal Error:\x1b[0m', error?.message || error);
-    if (process.env.DEBUG) {
-      console.error(error.stack);
-    }
+    if (process.env.DEBUG) console.error(error.stack);
     process.exit(1);
   }
 }
@@ -117,7 +114,7 @@ async function cmdHealth() {
 async function cmdPlan(requirement) {
   if (!requirement) {
     console.error('\x1b[31m错误: 请提供需求描述\x1b[0m');
-    console.log('用法: node cli.js plan "做一个博客系统"');
+    console.log('用法: bun cli.js plan "做一个博客系统"');
     process.exit(1);
   }
 
@@ -125,18 +122,15 @@ async function cmdPlan(requirement) {
     const planner = new Planner({ project_root: executeDir });
     const plan = await planner.plan(requirement);
 
-    // 保存计划
     const filename = `plan_${Date.now()}.json`;
     const plansDir = path.join(__dirname, 'plans');
-    const { filepath } = await planner.savePlan(plan, filename, plansDir);
+    await planner.savePlan(plan, filename, plansDir);
 
     console.log('\n生成的计划:');
     console.log(JSON.stringify(plan, null, 2));
   } catch (error) {
     console.error('\x1b[31mFailed to generate plan:\x1b[0m', error.message);
-    if (process.env.DEBUG) {
-      console.error(error.stack);
-    }
+    if (process.env.DEBUG) console.error(error.stack);
     process.exit(1);
   }
 }
@@ -144,37 +138,30 @@ async function cmdPlan(requirement) {
 async function cmdExecute(input) {
   if (!input) {
     console.error('\x1b[31m错误: 请提供计划文件或需求描述\x1b[0m');
-    console.log('用法: node cli.js execute <plan.json | "需求描述">');
+    console.log('用法: bun cli.js execute <plan.json | "需求描述">');
     process.exit(1);
   }
 
   let plan;
 
-  // 判断是文件还是自然语言
   if (input.endsWith('.json')) {
-    // 验证文件存在且可读
     try {
       await fs.access(input, fs.constants.R_OK);
-    } catch (err) {
+    } catch {
       console.error(`\x1b[31mPlan file not found: ${input}\x1b[0m`);
       process.exit(1);
     }
-    // 是计划文件
     console.log(`加载计划: ${input}\n`);
     const content = await fs.readFile(input, 'utf-8');
-    
-    // 解析 JSON 并捕获格式错误
+
     try {
       plan = JSON.parse(content);
     } catch (parseError) {
       console.error('\x1b[31mInvalid JSON format\x1b[0m');
-      if (process.env.DEBUG) {
-        console.error(parseError.message);
-      }
+      if (process.env.DEBUG) console.error(parseError.message);
       process.exit(1);
     }
 
-    // Validate plan structure
     if (!plan || typeof plan !== 'object') {
       console.error('\x1b[31mError: Invalid plan format\x1b[0m');
       process.exit(1);
@@ -185,7 +172,6 @@ async function cmdExecute(input) {
       process.exit(1);
     }
   } else {
-    // 是自然语言，先生成计划
     console.log(`从需求生成计划: "${input}"\n`);
     try {
       const planner = new Planner({ project_root: executeDir });
@@ -196,31 +182,25 @@ async function cmdExecute(input) {
       await planner.savePlan(plan, filename, plansDir);
     } catch (error) {
       console.error('\x1b[31mFailed to generate plan:\x1b[0m', error.message);
-      if (process.env.DEBUG) {
-        console.error(error.stack);
-      }
+      if (process.env.DEBUG) console.error(error.stack);
       process.exit(1);
     }
   }
 
-  // 执行计划
   await executePlan(plan);
 }
 
 async function cmdRun(requirement) {
-  // 检查是否有 --yes 标志
   const autoYes = args.includes('--yes') || args.includes('-y');
-  // 移除 --yes 或 -y
   const actualArgs = args.filter(a => !a.startsWith('--yes') && a !== '-y');
   requirement = actualArgs.slice(1).join(' ');
 
   if (!requirement) {
     console.error('\x1b[31m错误: 请提供需求描述\x1b[0m');
-    console.log('用法: node cli.js run "做一个博客系统" [--yes]');
+    console.log('用法: bun cli.js run "做一个博客系统" [--yes]');
     process.exit(1);
   }
 
-  // 1. 生成计划
   console.log('='.repeat(50));
   console.log('步骤 1: 生成执行计划');
   console.log('='.repeat(50));
@@ -236,9 +216,7 @@ async function cmdRun(requirement) {
     await planner.savePlan(plan, filename, plansDir);
   } catch (error) {
     console.error('\x1b[31mPlan generation failed:\x1b[0m', error.message);
-    if (process.env.DEBUG) {
-      console.error(error.stack);
-    }
+    if (process.env.DEBUG) console.error(error.stack);
     process.exit(1);
   }
 
@@ -250,18 +228,11 @@ async function cmdRun(requirement) {
   console.log(`  预估耗时: ${plan.metadata.total_minutes_estimate} 分钟`);
   console.log();
 
-  // 2. 确认执行
+  // 确认执行
   let confirmed = autoYes;
   if (!autoYes) {
-    const readline = require('readline');
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    const answer = await new Promise(resolve => {
-      rl.question('确认执行? (y/n): ', resolve);
-    });
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise(resolve => rl.question('确认执行? (y/n): ', resolve));
     rl.close();
     confirmed = answer.toLowerCase() === 'y';
   }
@@ -271,7 +242,6 @@ async function cmdRun(requirement) {
     process.exit(0);
   }
 
-  // 3. 执行
   console.log();
   console.log('='.repeat(50));
   console.log('步骤 2: 执行计划');
@@ -283,16 +253,14 @@ async function cmdRun(requirement) {
 
 // ===== 辅助函数 =====
 async function executePlan(plan) {
-  // 验证工作目录存在
   try {
     await fs.access(executeDir, fs.constants.W_OK);
-  } catch (err) {
+  } catch {
     console.error(`\x1b[31mExecute directory not found or not writable: ${executeDir}\x1b[0m`);
     process.exit(1);
   }
-  
+
   console.log('开始执行计划...\n');
-  // 检查 Agent
   console.log('检查 Agent...\n');
   const status = await healthCheck();
   const allReady = Object.values(status).every(v => v);
@@ -300,24 +268,20 @@ async function executePlan(plan) {
     console.log('\x1b[33m警告: 部分 Agent 不可用，继续执行...\x1b[0m\n');
   }
 
-  // 创建引擎并执行
   const engine = createEngine({
     project_root: executeDir,
     max_review_cycles: 3
   });
 
-  // 加载系统监控组件
   const supervisor = new Supervisor(engine, {
     logger: { logDir: path.join(executeDir, '.appmaker', 'logs') }
   });
 
-  // 启动 UI 看板
   const monitor = new ProgressMonitor(engine, 8088);
   const monitorUrl = await monitor.start();
   console.log(`\n\x1b[36m🚀 已开启浮动进度看板: ${monitorUrl}\x1b[0m\n`);
-  
-  // 自动弹出默认浏览器展示 Widget
-  const { exec } = require('child_process');
+
+  // 自动弹出浏览器
   if (process.platform === 'win32') exec(`start ${monitorUrl}`);
   else if (process.platform === 'darwin') exec(`open ${monitorUrl}`);
   else exec(`xdg-open ${monitorUrl}`);
@@ -332,7 +296,6 @@ async function executePlan(plan) {
   const result = await engine.execute(plan);
   const duration = Math.round((Date.now() - startTime) / 1000);
 
-  // 输出结果
   console.log();
   console.log('='.repeat(50));
   console.log('执行完成');
@@ -356,18 +319,9 @@ async function executePlan(plan) {
   }
 }
 
-async function fileExists(filepath) {
-  try {
-    await fs.access(filepath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function showHelp() {
   console.log(`
-用法: node cli.js <command> [参数]
+用法: bun cli.js <command> [参数]
 
 命令:
   health                 检查 Agent 可用性
@@ -376,17 +330,14 @@ function showHelp() {
   run "需求描述"        生成计划并自动执行（推荐）
 
 示例:
-  node cli.js health
-  node cli.js plan "做一个博客系统，支持文章和评论"
-  node cli.js run "做一个博客系统"
-  node cli.js execute plans/plan_123456.json
+  bun cli.js health
+  bun cli.js plan "做一个博客系统，支持文章和评论"
+  bun cli.js run "做一个博客系统"
+  bun cli.js execute plans/plan_123456.json
 
 提示:
   run 命令会先显示计划摘要，确认后再执行
   `);
 }
 
-main().catch(error => {
-  console.error('\x1b[31m错误:\x1b[0m', error.message);
-  process.exit(1);
-});
+main();

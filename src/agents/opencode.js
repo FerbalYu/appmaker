@@ -3,7 +3,12 @@
  * 负责 Code Review 和质量把控，不写代码，只挑毛病
  */
 
-const { AgentAdapter } = require('./base');
+import { AgentAdapter } from './base.js';
+import { ACPClient } from './acp-client.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const OPENCODE_CONFIG = {
   name: 'opencode',
@@ -17,12 +22,12 @@ const OPENCODE_CONFIG = {
   ]
 };
 
-class OpenCodeAdapter extends AgentAdapter {
+export class OpenCodeAdapter extends AgentAdapter {
   constructor(config = {}) {
     super({ ...OPENCODE_CONFIG, ...config });
     this.cliPath = config.cli_path || 'opencode';
     this.apiEndpoint = config.api_endpoint || 'http://localhost:3000';
-    this.timeout = config.timeout || 60000; // 评审模式 1 分钟
+    this.timeout = config.timeout || 60000;
   }
 
   /**
@@ -32,7 +37,6 @@ class OpenCodeAdapter extends AgentAdapter {
    */
   async execute(task) {
     const startTime = Date.now();
-
     const reviewPrompt = this._buildReviewPrompt(task);
 
     try {
@@ -108,7 +112,6 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
     if (context.architecture_rules) {
       prompt += `\n\n## 架构规则（违反必扣分）\n${context.architecture_rules}`;
     }
-
     if (context.quality_rules) {
       prompt += `\n\n## 质量标准\n${context.quality_rules}`;
     }
@@ -121,76 +124,48 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
    * @private
    */
   async _reviewViaCLI(prompt, context) {
-    const { ACPClient } = require('./acp-client');
-
-    const path = require('path');
-
     const acpBridgePath = path.join(__dirname, 'acp-bridges', 'opencode-bridge.js');
     console.log(`[opencode] Starting ACP Bridge at: ${acpBridgePath}`);
 
     const client = new ACPClient(process.execPath, [acpBridgePath], {
-       cwd: context.project_root || process.cwd()
+      cwd: context?.project_root || process.cwd()
     }, 'opencode-acp');
 
     client.on('stderr', (data) => {
-       process.stderr.write(`[opencode-acp err] ${data}`);
+      process.stderr.write(`[opencode-acp err] ${data}`);
     });
 
     client.on('notification', (msg) => {
-       if (msg.method === 'agent/stderr') {
-          process.stderr.write(`[opencode-acp remote stderr] ${msg.params.data}`);
-       }
+      if (msg.method === 'agent/stderr') {
+        process.stderr.write(`[opencode-acp remote stderr] ${msg.params.data}`);
+      }
     });
 
     try {
-      await client.start(10000); // 10秒启动超时
-      const result = await client.request('review', { prompt, context, timeout: this.timeout }, this.timeout + 5000);
-      return result;
+      await client.start(10000);
+      return await client.request('review', { prompt, context, timeout: this.timeout }, this.timeout + 5000);
     } finally {
       client.stop();
     }
   }
 
   /**
-   * 通过 API 执行评审
+   * 通过 API 执行评审（使用 fetch）
    * @private
    */
   async _reviewViaAPI(prompt, context) {
-    const http = require('http');
-
-    const requestBody = JSON.stringify({
-      prompt,
-      mode: 'review',
-      context
+    const response = await fetch(this.apiEndpoint + '/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, mode: 'review', context }),
+      signal: AbortSignal.timeout(this.timeout)
     });
 
-    return new Promise((resolve, reject) => {
-      const url = new URL(this.apiEndpoint + '/review');
-      const req = http.request({
-        hostname: url.hostname,
-        port: url.port,
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(requestBody)
-        }
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch {
-            reject(new Error(`Invalid review response: ${data}`));
-          }
-        });
-      });
-
-      req.on('error', reject);
-      req.write(requestBody);
-      req.end();
-    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Review API error: ${response.status} ${text}`);
+    }
+    return response.json();
   }
 
   /**
@@ -199,7 +174,6 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
    */
   _formatReviewResult(rawResult, startTime, taskId) {
     const duration = Date.now() - startTime;
-
     return {
       task_id: taskId || 'unknown',
       agent: this.name,
@@ -226,31 +200,22 @@ ${files.length > 0 ? files.map(f => `- ${f}`).join('\n') : '（无指定文件�
   async healthCheck() {
     try {
       if (this.config.use_cli) {
-        const { ACPClient } = require('./acp-client');
-        const path = require('path');
         const acpBridgePath = path.join(__dirname, 'acp-bridges', 'opencode-bridge.js');
         const client = new ACPClient(process.execPath, [acpBridgePath], {}, 'opencode-acp-hc');
         try {
-           await client.start(5000);
-           return true;
+          await client.start(5000);
+          return true;
         } finally {
-           client.stop();
+          client.stop();
         }
       } else {
-        const http = require('http');
-        return new Promise((resolve) => {
-          const url = new URL(this.apiEndpoint + '/health');
-          const req = http.get(url, { timeout: 5000 }, (res) => {
-            resolve(res.statusCode === 200);
-          });
-          req.on('error', () => resolve(false));
-          req.on('timeout', () => req.destroy());
+        const res = await fetch(this.apiEndpoint + '/health', {
+          signal: AbortSignal.timeout(5000)
         });
+        return res.ok;
       }
     } catch {
       return false;
     }
   }
 }
-
-module.exports = { OpenCodeAdapter };

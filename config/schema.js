@@ -2,9 +2,9 @@
  * 极简的配置 Schema 验证
  */
 
-function validateConfig(config) {
+export function validateConfig(config) {
   const errors = [];
-  
+
   if (config.agents) {
     if (config.agents['claude-code']) {
       if (typeof config.agents['claude-code'].timeout_ms !== 'number') {
@@ -20,7 +20,7 @@ function validateConfig(config) {
 
   if (config.engine) {
     if (typeof config.engine.max_review_cycles !== 'number') {
-      errors.push("engine.max_review_cycles must be a number");
+      errors.push('engine.max_review_cycles must be a number');
     }
   }
 
@@ -28,5 +28,3 @@ function validateConfig(config) {
     throw new Error('Config validation failed:\n' + errors.join('\n'));
   }
 }
-
-module.exports = { validateConfig };

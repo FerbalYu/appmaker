@@ -3,21 +3,24 @@
  * 统一导出所有 Agent 相关功能
  */
 
-const { AgentAdapter, RESULT_FORMAT } = require('./base');
-const { OpenCodeAdapter } = require('./opencode');
-const { ClaudeCodeAdapter } = require('./claude-code');
-const { AgentDispatcher, TASK_TYPE_MAPPING } = require('./dispatcher');
-const { ExecutionEngine } = require('../engine');
-const { Planner } = require('../planner');
+export { AgentAdapter, RESULT_FORMAT } from './base.js';
+export { OpenCodeAdapter } from './opencode.js';
+export { ClaudeCodeAdapter } from './claude-code.js';
+export { AgentDispatcher, TASK_TYPE_MAPPING } from './dispatcher.js';
 
-const { config } = require('../../config');
+import { AgentDispatcher } from './dispatcher.js';
+import { ClaudeCodeAdapter } from './claude-code.js';
+import { OpenCodeAdapter } from './opencode.js';
+import { ExecutionEngine } from '../engine.js';
+import { Planner } from '../planner.js';
+import { config } from '../../config/index.js';
 
 /**
  * 创建 Agent Dispatcher 实例
- * @param {Object} overrideConfig - 可覆盖的配置
+ * @param {Object} overrideConfig
  * @returns {AgentDispatcher}
  */
-function createDispatcher(overrideConfig = {}) {
+export function createDispatcher(overrideConfig = {}) {
   const finalConfig = {
     ...config.dispatcher,
     ...(config.agents?.opencode || {}),
@@ -26,7 +29,6 @@ function createDispatcher(overrideConfig = {}) {
   };
   const dispatcher = new AgentDispatcher(finalConfig);
 
-  // 注册内置 Agent
   dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
     ...config.agents?.['claude-code'],
     ...overrideConfig
@@ -41,54 +43,32 @@ function createDispatcher(overrideConfig = {}) {
 
 /**
  * 快速调度一个任务
- * @param {Object} task - 任务描述
- * @returns {Promise<Object>}
  */
-async function dispatch(task) {
+export async function dispatch(task) {
   const dispatcher = createDispatcher();
   return dispatcher.dispatch(task);
 }
 
 /**
  * 快速并行调度多个任务
- * @param {Object[]} tasks - 任务数组
- * @returns {Promise<Object>}
  */
-async function dispatchParallel(tasks) {
+export async function dispatchParallel(tasks) {
   const dispatcher = createDispatcher();
   return dispatcher.dispatch({ type: 'parallel', tasks });
 }
 
 /**
  * 健康检查所有 Agent
- * @returns {Promise<Object>}
  */
-async function healthCheck() {
+export async function healthCheck() {
   const dispatcher = createDispatcher();
   return dispatcher.healthCheck();
 }
 
-module.exports = {
-  // 类
-  AgentAdapter,
-  OpenCodeAdapter,
-  ClaudeCodeAdapter,
-  AgentDispatcher,
-  ExecutionEngine,
-  Planner,
+/**
+ * 工厂函数
+ */
+export const createEngine = (cfg) => new ExecutionEngine(cfg);
+export const createPlanner = (cfg) => new Planner(cfg);
 
-  // 常量
-  RESULT_FORMAT,
-  TASK_TYPE_MAPPING,
-
-  // 工厂函数
-  createDispatcher,
-  createEngine: (config) => new ExecutionEngine(config),
-  createPlanner: (config) => new Planner(config),
-  dispatch,
-  dispatchParallel,
-  healthCheck,
-
-  // 配置
-  config
-};
+export { ExecutionEngine, Planner, config };

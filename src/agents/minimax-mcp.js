@@ -1,13 +1,13 @@
 /**
  * Minimax Token Plan MCP Adapter
- * 结合 MiniMax-M2.7 与 MCP (uvx minimax-coding-plan-mcp) 
+ * 结合 MiniMax-M2.7 与 MCP (uvx minimax-coding-plan-mcp)
  * 为 Planner 赋能搜商，生成更落地的架构计划
+ * 已用原生 fetch 替代 axios
  */
 
-const { AgentAdapter } = require('./base');
-const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
-const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
-const axios = require('axios');
+import { AgentAdapter } from './base.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const MINIMAX_MCP_CONFIG = {
   name: 'minimax-mcp',
@@ -31,8 +31,8 @@ const SYSTEM_PROMPT = `你是一个资深的软件架构师。请深入分析以
     {
       "id": "t1",
       "description": "具体的开发阶段或实现任务",
-      "type": "architect", // 可选值: architect, create, integrate, test 等
-      "dependencies": [], // 此任务依赖的前置任务 id 列表
+      "type": "architect",
+      "dependencies": [],
       "agent": "claude-code",
       "estimated_tokens": 2000,
       "estimated_minutes": 15
@@ -43,12 +43,12 @@ const SYSTEM_PROMPT = `你是一个资深的软件架构师。请深入分析以
   ]
 }`;
 
-class MinimaxMCPAdapter extends AgentAdapter {
+export class MinimaxMCPAdapter extends AgentAdapter {
   constructor(config = {}) {
     super({ ...MINIMAX_MCP_CONFIG, ...config });
     this.apiKey = process.env.MINIMAX_API_KEY || config.api_key;
     this.apiHost = process.env.MINIMAX_API_HOST || config.api_host || 'https://api.minimaxi.com';
-    this.model =  process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-M2.7';
+    this.model = process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-M2.7';
     this.mcpCommand = process.env.MINIMAX_MCP_COMMAND || config.mcp_command || 'uvx';
     this.mcpArgs = process.env.MINIMAX_MCP_ARGS || config.mcp_args || ['minimax-coding-plan-mcp', '-y'];
   }
@@ -56,17 +56,20 @@ class MinimaxMCPAdapter extends AgentAdapter {
   async healthCheck() {
     if (!this.apiKey) return false;
     try {
-      const res = await axios.post(`${this.apiHost}/v1/text/chatcompletion_pro`, {
-        model: this.model,
-        messages: [{ role: 'user', content: 'hello' }],
-        max_tokens: 10
-      }, {
+      const res = await fetch(`${this.apiHost}/v1/text/chatcompletion_pro`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: 'user', content: 'hello' }],
+          max_tokens: 10
+        }),
+        signal: AbortSignal.timeout(10000)
       });
-      return res.status === 200;
+      return res.ok;
     } catch {
       return false;
     }
@@ -82,13 +85,17 @@ class MinimaxMCPAdapter extends AgentAdapter {
         throw new Error('MINIMAX_API_KEY environment variable is missing.');
       }
 
-      console.log(`[${this.name}] 初始化 MCP 客户端: ${this.mcpCommand} ${this.mcpArgs.join(' ')}`);
+      const mcpArgs = Array.isArray(this.mcpArgs)
+        ? this.mcpArgs
+        : this.mcpArgs.split(',');
+
+      console.log(`[${this.name}] 初始化 MCP 客户端: ${this.mcpCommand} ${mcpArgs.join(' ')}`);
       transport = new StdioClientTransport({
         command: this.mcpCommand,
-        args: this.mcpArgs,
+        args: mcpArgs,
         env: {
           ...process.env,
-          MINIMAX_API_KEY: this.apiKey, // 将 key 传给 MCP
+          MINIMAX_API_KEY: this.apiKey,
           MINIMAX_API_HOST: this.apiHost
         }
       });
@@ -100,7 +107,7 @@ class MinimaxMCPAdapter extends AgentAdapter {
 
       await mcpClient.connect(transport);
       console.log(`[${this.name}] MCP 服务已连接，获取工具列表...`);
-      
+
       const toolsMetadata = await mcpClient.listTools();
       const tools = toolsMetadata.tools.map(t => ({
         type: 'function',
@@ -111,7 +118,6 @@ class MinimaxMCPAdapter extends AgentAdapter {
         }
       }));
 
-      // 构建对话循环
       let messages = [
         { role: 'system', name: 'system', content: SYSTEM_PROMPT },
         { role: 'user', name: 'user', content: task.description }
@@ -119,51 +125,46 @@ class MinimaxMCPAdapter extends AgentAdapter {
 
       let finalOutput = '';
 
-      // 对话大循环，最多支持 5 次 tool calls
+      // 对话大循环，最多 5 次 tool calls
       for (let i = 0; i < 5; i++) {
-        const reqPayload = {
-          model: this.model,
-          messages: messages,
-          tools: tools,
-          tool_choice: "auto"
-        };
-
-        const res = await axios.post(`${this.apiHost}/v1/text/chatcompletion_pro`, reqPayload, {
+        const res = await fetch(`${this.apiHost}/v1/text/chatcompletion_pro`, {
+          method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages,
+            tools,
+            tool_choice: 'auto'
+          }),
+          signal: AbortSignal.timeout(120000)
         });
 
-        const choice = res.data.choices[0];
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`MiniMax API error: ${res.status} ${errText}`);
+        }
+
+        const data = await res.json();
+        const choice = data.choices[0];
         const message = choice.message;
-        
-        // 追加模型的原始响应到历史中
         messages.push(message);
 
-        if (message.tool_calls && message.tool_calls.length > 0) {
+        if (message.tool_calls?.length > 0) {
           console.log(`[${this.name}] 模型尝试调用 ${message.tool_calls.length} 个工具...`);
           for (const toolCall of message.tool_calls) {
             console.log(`[${this.name}] 调用工具: ${toolCall.function.name}`);
             const args = JSON.parse(toolCall.function.arguments);
             let toolResult;
             try {
-              toolResult = await mcpClient.callTool({
-                name: toolCall.function.name,
-                arguments: args
-              });
+              toolResult = await mcpClient.callTool({ name: toolCall.function.name, arguments: args });
             } catch (err) {
-              toolResult = { content: [{ type: 'text', text: `Error: ${err.message}`}] };
-            }
-            
-            // 将工具返回结果加入对话
-            let textOutput = '';
-            if (toolResult.content && toolResult.content.length > 0) {
-              textOutput = toolResult.content[0].text;
-            } else {
-              textOutput = JSON.stringify(toolResult);
+              toolResult = { content: [{ type: 'text', text: `Error: ${err.message}` }] };
             }
 
+            const textOutput = toolResult.content?.[0]?.text ?? JSON.stringify(toolResult);
             messages.push({
               role: 'tool',
               name: toolCall.function.name,
@@ -172,18 +173,15 @@ class MinimaxMCPAdapter extends AgentAdapter {
             });
           }
         } else {
-          // 没有工具调用，模型给出了最终结论
           finalOutput = message.content;
           break;
         }
       }
 
-      // 如果 5 轮都没有给出最终输出，兜底处理
       if (!finalOutput && messages[messages.length - 1].content) {
         finalOutput = messages[messages.length - 1].content;
       }
 
-      // 尝试校验输出 JSON
       const contentStr = this._extractJSON(finalOutput);
 
       return this._formatResult({
@@ -194,41 +192,27 @@ class MinimaxMCPAdapter extends AgentAdapter {
       }, startTime);
 
     } catch (error) {
-       console.error(`[${this.name}] 执行失败: `, error.message);
-       if (error.response?.data) {
-         console.error('API Response details:', error.response.data);
-       }
-       return this.handleError(error);
+      console.error(`[${this.name}] 执行失败: `, error.message);
+      return this.handleError(error);
     } finally {
       if (mcpClient) {
-         try {
-           await mcpClient.close();
-         } catch(e) {}
+        try { await mcpClient.close(); } catch { /* ignore */ }
       }
       if (transport) {
-         try {
-           await transport.close();
-         } catch(e) {}
+        try { await transport.close(); } catch { /* ignore */ }
       }
     }
   }
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
-    
-    // 提取 markdown 中的 json
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    for (const match of codeBlocks) {
-      return match[1].trim();
-    }
-    
-    // 备用提取
+    for (const match of codeBlocks) return match[1].trim();
     const startObj = output.indexOf('{');
     const endObj = output.lastIndexOf('}');
     if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
       return output.substring(startObj, endObj + 1);
     }
-    
     return output;
   }
 
@@ -251,5 +235,3 @@ class MinimaxMCPAdapter extends AgentAdapter {
     };
   }
 }
-
-module.exports = { MinimaxMCPAdapter };

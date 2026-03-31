@@ -1,10 +1,14 @@
 /**
  * 配置加载器
+ * Bun 下可直接用 import JSON（原生支持）
  */
 
-const fs = require('fs');
-const path = require('path');
-const { validateConfig } = require('./schema');
+import { existsSync, readFileSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { validateConfig } from './schema.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 深度合并对象
 function deepMerge(target, source) {
@@ -19,9 +23,9 @@ function deepMerge(target, source) {
 
 function loadJson(filename) {
   const filepath = path.join(__dirname, filename);
-  if (fs.existsSync(filepath)) {
+  if (existsSync(filepath)) {
     try {
-      return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
+      return JSON.parse(readFileSync(filepath, 'utf-8'));
     } catch (e) {
       console.error(`Failed to parse ${filename}:`, e.message);
     }
@@ -31,16 +35,13 @@ function loadJson(filename) {
 
 function loadConfig() {
   const defaults = loadJson('defaults.json');
-  const userConfig = loadJson('agents.json'); // Main user config for backward compatibility
+  const userConfig = loadJson('agents.json');
 
   const merged = deepMerge(defaults, userConfig);
-  
   validateConfig(merged);
-  
   return merged;
 }
 
-const config = loadConfig();
-const agents = config; // Keep export signature
-
-module.exports = { config, agents, loadConfig };
+export const config = loadConfig();
+export const agents = config;
+export { loadConfig };

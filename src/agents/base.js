@@ -3,7 +3,7 @@
  * 定义 Agent 调用的标准接口
  */
 
-class AgentAdapter {
+export class AgentAdapter {
   constructor(config) {
     this.config = config;
     this.name = config.name;
@@ -65,7 +65,7 @@ class AgentAdapter {
 /**
  * Agent 执行结果标准格式
  */
-const RESULT_FORMAT = {
+export const RESULT_FORMAT = {
   task_id: 'string',
   agent: 'string',
   status: 'success | failed | partial',
@@ -81,5 +81,3 @@ const RESULT_FORMAT = {
   },
   errors: []
 };
-
-module.exports = { AgentAdapter, RESULT_FORMAT };

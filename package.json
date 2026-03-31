@@ -1,17 +1,18 @@
 {
   "name": "appmaker",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "AI 驱动的 APP 开发系统",
   "main": "src/agents/index.js",
   "bin": {
     "appmaker": "cli.js"
   },
   "scripts": {
-    "start": "node cli.js",
-    "test": "jest",
-    "test:cov": "jest --coverage",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "start": "bun run cli.js",
+    "dev": "bun --watch cli.js",
+    "test": "bun test",
+    "test:cov": "bun test --coverage",
+    "build": "bun build cli.js --compile --outfile dist/appmaker",
+    "lint": "bun x eslint ."
   },
   "keywords": [
     "ai",
@@ -21,15 +22,12 @@
   ],
   "author": "",
   "license": "ISC",
+  "type": "module",
   "devDependencies": {
-    "eslint": "^8.57.0",
-    "jest": "^29.7.0"
+    "eslint": "^8.57.0"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^2.1.87",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "axios": "^1.14.0",
-    "cross-spawn": "^7.0.6",
-    "dotenv": "^17.3.1"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

@@ -1,7 +1,7 @@
-const fs = require('fs').promises;
-const path = require('path');
+import { promises as fs } from 'fs';
+import path from 'path';
 
-class Logger {
+export class Logger {
   constructor(options = {}) {
     this.logDir = options.logDir || path.join(process.cwd(), '.appmaker', 'logs');
     this.level = options.level || 'info';
@@ -19,31 +19,19 @@ class Logger {
 
   async _writeLog(category, filename, message) {
     await this._init();
-    
-    // 如果 category 为空，则写入根 logDir (例如 supervisor.log)
     const targetDir = category ? path.join(this.logDir, category) : this.logDir;
     const filepath = path.join(targetDir, filename);
     const timestamp = new Date().toISOString();
-    
-    // 如果是对象尝试格式化
-    let content = message;
-    if (typeof message === 'object') {
-      content = JSON.stringify(message, null, 2);
-    }
-
-    const line = `[${timestamp}] ${content}\n`;
+    const content = typeof message === 'object' ? JSON.stringify(message, null, 2) : message;
     try {
-      await fs.appendFile(filepath, line, 'utf-8');
-    } catch {
-      // Ignore
-    }
+      await fs.appendFile(filepath, `[${timestamp}] ${content}\n`, 'utf-8');
+    } catch { /* ignore */ }
   }
 
   async log(level, category, filename, message, meta = {}) {
     const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
     const prefix = level === 'ERROR' ? '\x1b[31m' : level === 'WARN' ? '\x1b[33m' : '';
     const suffix = prefix ? '\x1b[0m' : '';
-    
     console.log(`${prefix}[${level}]${category ? `[${category}]` : ''} ${message}${suffix}`);
     await this._writeLog(category, filename, `[${level}] ${message}${metaStr}`);
   }
@@ -60,5 +48,3 @@ class Logger {
     return this.log('ERROR', category, filename, message, meta);
   }
 }
-
-module.exports = { Logger };
