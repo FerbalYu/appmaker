@@ -10,6 +10,9 @@
  *   node cli.js run "需求描述"            自动生成计划并执行（推荐）
  */
 
+// 加载环境变量
+require('dotenv').config();
+
 const { createEngine, healthCheck } = require('./src/agents');
 const { Planner } = require('./src/planner');
 const { Supervisor } = require('./src/supervisor');

@@ -142,13 +142,25 @@ class ClaudeCodeAdapter extends AgentAdapter {
 
   _extractJSON(output) {
     if (typeof output !== 'string') return JSON.stringify(output);
-    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) return codeBlockMatch[1].trim();
-    const start = output.indexOf('{');
-    const end = output.lastIndexOf('}');
-    if (start !== -1 && end !== -1 && end > start) {
-      return output.substring(start, end + 1);
+    
+    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+    for (const match of codeBlocks) {
+      try {
+        const parsed = JSON.parse(match[1].trim());
+        return JSON.stringify(parsed);
+      } catch (e) { /* ignore and continue searching */ }
     }
+    
+    const startObj = output.indexOf('{');
+    const endObj = output.lastIndexOf('}');
+    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
+      const candidate = output.substring(startObj, endObj + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        return JSON.stringify(parsed);
+      } catch (e) { /* ignore */ }
+    }
+    
     return output;
   }
 

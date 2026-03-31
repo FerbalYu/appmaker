@@ -6,6 +6,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { AgentDispatcher } = require('./agents/dispatcher');
 const { ClaudeCodeAdapter } = require('./agents/claude-code');
+const { MinimaxMCPAdapter } = require('./agents/minimax-mcp');
 const { config } = require('../config');
 
 class Planner {
@@ -20,6 +21,10 @@ class Planner {
     });
     this.dispatcher.registerAgent('claude-code', new ClaudeCodeAdapter({
       ...this.config.agents?.['claude-code'],
+      ...configOverrides
+    }));
+    this.dispatcher.registerAgent('minimax-mcp', new MinimaxMCPAdapter({
+      ...this.config.agents?.['minimax-mcp'],
       ...configOverrides
     }));
   }
@@ -59,11 +64,15 @@ ${requirement}
 }`;
 
     try {
-      // 1. 调用 claude-code 做深度需求分析
+      // 1. 调用选定的 AI 分析策略
+      const plannerAgentName = this.config.planner_agent || 'claude-code';
+      
       const agentResult = await this.dispatcher.dispatch({
         id: 'plan_analysis',
         type: 'analysis',
-        description: prompt,
+        // claude-code 使用组装好的 prompt，minimax 使用原始 requirement 并在内部重组
+        description: plannerAgentName === 'claude-code' ? prompt : requirement,
+        agent: plannerAgentName, // 优先调度该 agent
         context: { project_root: this.projectRoot }
       });
 
@@ -85,13 +94,25 @@ ${requirement}
 
   _extractJSON(output) {
     if (typeof output !== 'string') return JSON.stringify(output);
-    const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) return codeBlockMatch[1].trim();
-    const start = output.indexOf('{');
-    const end = output.lastIndexOf('}');
-    if (start !== -1 && end !== -1 && end > start) {
-      return output.substring(start, end + 1);
+    
+    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+    for (const match of codeBlocks) {
+      try {
+        const parsed = JSON.parse(match[1].trim());
+        return JSON.stringify(parsed);
+      } catch (e) { /* ignore */ }
     }
+    
+    const startObj = output.indexOf('{');
+    const endObj = output.lastIndexOf('}');
+    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
+      const candidate = output.substring(startObj, endObj + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        return JSON.stringify(parsed);
+      } catch (e) { /* ignore */ }
+    }
+    
     return output;
   }
 

@@ -1,9 +1,11 @@
 const { Logger } = require('./logger');
+const { SelfCorrector } = require('./corrector');
 
 class Supervisor {
   constructor(engine, config = {}) {
     this.engine = engine;
     this.logger = new Logger(config.logger);
+    this.corrector = new SelfCorrector(engine);
     this.metrics = {
       tasks: {},
       tokens: { claude: 0, opencode: 0, total: 0 },
@@ -84,8 +86,9 @@ class Supervisor {
     }
   }
 
-  triggerCorrection(reason, context) {
+  async triggerCorrection(reason, context) {
     this.logger.info('corrections', `corr_${Date.now()}.md`, `Triggered correction for ${context.task.id}`, { reason });
+    await this.corrector.correct(reason, context);
   }
 }
 

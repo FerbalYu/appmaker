@@ -46,7 +46,9 @@ node cli.js execute plans/plan_xxx.json
 | `node cli.js health`         | 检查 Agent 可用性       |
 | `node cli.js plan "需求"`      | 生成执行计划（保存到 plans/） |
 | `node cli.js execute <plan>` | 执行计划文件             |
-| `node cli.js run "需求"`       | 自动生成计划并执行（推荐）      |
+| `node cli.js run "需求"`       | 自动生成计划并运行（附带进度面板UI） |
+
+> **提示:** 使用 `node cli.js run` 时，系统将启动 `ProgressMonitor` Web 进图仪表盘服务并在浏览器中自动打开显示。
 
 ## 示例
 
