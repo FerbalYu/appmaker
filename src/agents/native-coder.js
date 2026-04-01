@@ -1,6 +1,6 @@
 /**
  * Native Coder Adapter - AI 编程 Agent
- * 
+ *
  * 集成 UniversalToolbox，支持：
  * - 文件读写工具
  * - Bash 命令执行
@@ -16,16 +16,24 @@ import path from 'path';
 const NATIVE_CODER_CONFIG = {
   name: 'native-coder',
   type: 'api',
-  capabilities: ['coding', 'refactoring', 'file-editing', 'testing', 'git-operations']
+  capabilities: ['coding', 'refactoring', 'file-editing', 'testing', 'git-operations'],
 };
 
 export class NativeCoderAdapter extends AgentAdapter {
   constructor(config = {}) {
     super({ ...NATIVE_CODER_CONFIG, ...config });
     this.apiKey = process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY || config.api_key;
-    this.apiHost = process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST || config.api_host || 'https://api.minimaxi.com';
-    this.model = process.env.OPENAI_MODEL || process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-Text-01';
-    
+    this.apiHost =
+      process.env.OPENAI_API_BASE ||
+      process.env.MINIMAX_API_HOST ||
+      config.api_host ||
+      'https://api.minimaxi.com';
+    this.model =
+      process.env.OPENAI_MODEL ||
+      process.env.MINIMAX_API_MODEL ||
+      config.model ||
+      'MiniMax-Text-01';
+
     if (config.project_root) {
       this.toolbox.config.workspace_root = config.project_root;
     }
@@ -41,20 +49,20 @@ export class NativeCoderAdapter extends AgentAdapter {
    */
   _getNativeToolsSchema() {
     const tools = this.getTools();
-    const fileTools = tools.filter(t => t.category === 'file_system').slice(0, 6);
-    const bashTools = tools.filter(t => t.category === 'bash').slice(0, 4);
-    const gitTools = tools.filter(t => t.category === 'git');
-    const pkgTools = tools.filter(t => t.category === 'package_manager');
-    
+    const fileTools = tools.filter((t) => t.category === 'file_system').slice(0, 6);
+    const bashTools = tools.filter((t) => t.category === 'bash').slice(0, 4);
+    const gitTools = tools.filter((t) => t.category === 'git');
+    const pkgTools = tools.filter((t) => t.category === 'package_manager');
+
     const filteredTools = [...fileTools, ...bashTools, ...gitTools, ...pkgTools];
-    
-    return filteredTools.map(t => ({
+
+    return filteredTools.map((t) => ({
       type: 'function',
       function: {
         name: t.name,
         description: t.description,
-        parameters: t.inputSchema
-      }
+        parameters: t.inputSchema,
+      },
     }));
   }
 
@@ -73,18 +81,18 @@ export class NativeCoderAdapter extends AgentAdapter {
           result = await this.executeTool('write_file', {
             file_path: op.path,
             content: op.content,
-            append: false
+            append: false,
           });
           break;
         case 'delete':
           result = await this.executeTool('delete_file', {
             path: op.path,
-            recursive: op.recursive || false
+            recursive: op.recursive || false,
           });
           break;
         case 'read':
           result = await this.executeTool('read_file', {
-            file_path: op.path
+            file_path: op.path,
           });
           break;
         default:
@@ -101,39 +109,43 @@ export class NativeCoderAdapter extends AgentAdapter {
    */
   async _getProjectContext(projectRoot) {
     const context = { files: [], structure: '', techStack: '' };
-    
+
     const listResult = await this.executeTool('list_directory', {
       dir_path: projectRoot || '.',
-      include_hidden: false
+      include_hidden: false,
     });
-    
+
     if (listResult.success && listResult.result.items) {
-      context.files = listResult.result.items
-        .filter(i => i.type === 'file')
-        .map(f => f.name);
+      context.files = listResult.result.items.filter((i) => i.type === 'file').map((f) => f.name);
       context.structure = listResult.result.items
-        .map(i => `${i.type === 'directory' ? '📁' : '📄'} ${i.name}`)
+        .map((i) => `${i.type === 'directory' ? '📁' : '📄'} ${i.name}`)
         .join('\n');
     }
-    
+
     const packageResult = await this.executeTool('read_file', { file_path: 'package.json' });
     if (packageResult.success) {
       try {
         const pkg = JSON.parse(packageResult.result.content);
-        context.techStack = `Node.js/${pkg.engines?.node || 'unknown'} | ${Object.keys(pkg.dependencies || {}).slice(0, 5).join(', ')}`;
-      } catch {}
+        context.techStack = `Node.js/${pkg.engines?.node || 'unknown'} | ${Object.keys(
+          pkg.dependencies || {},
+        )
+          .slice(0, 5)
+          .join(', ')}`;
+      } catch (_) {
+        /* ignore parse errors */
+      }
     }
-    
+
     const readmeResult = await this.executeTool('read_file', { file_path: 'README.md' });
     if (readmeResult.success) {
       context.readmeSummary = readmeResult.result.content.substring(0, 300);
     }
-    
+
     const gitResult = await this.executeTool('git_status', {});
     if (gitResult.success) {
       context.gitStatus = gitResult.result.stdout?.substring(0, 200) || 'Clean';
     }
-    
+
     return context;
   }
 
@@ -141,7 +153,9 @@ export class NativeCoderAdapter extends AgentAdapter {
     const startTime = Date.now();
     try {
       if (!this.apiKey) {
-        throw new Error('API Key missing. Please set OPENAI_API_KEY or MINIMAX_API_KEY for native-coder');
+        throw new Error(
+          'API Key missing. Please set OPENAI_API_KEY or MINIMAX_API_KEY for native-coder',
+        );
       }
 
       const projectRoot = task.context?.project_root || '.';
@@ -162,9 +176,10 @@ export class NativeCoderAdapter extends AgentAdapter {
 
 你已经接入了全自动开发动作执行平台，当你需要读取/修改文件、执行命令时，请直接主动调用工具 (Tools)。请尽可能结合当前上下文环境做出符合项目技术栈的直接干预和修改！`;
 
-      const subtasksSection = task.subtasks && task.subtasks.length > 0 
-        ? `\n## 明确子任务 (必须执行)\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n` 
-        : '';
+      const subtasksSection =
+        task.subtasks && task.subtasks.length > 0
+          ? `\n## 明确子任务 (必须执行)\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n`
+          : '';
 
       const userPrompt = `## 项目需求
 ${task.description}
@@ -181,15 +196,15 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
 请使用工具完成代码编写任务，直接输出 JSON 格式的 tool_calls。`;
 
-      const endpoint = this.apiHost.endsWith('/v1') 
-          ? `${this.apiHost}/chat/completions` 
-          : `${this.apiHost}/v1/chat/completions`;
+      const endpoint = this.apiHost.endsWith('/v1')
+        ? `${this.apiHost}/chat/completions`
+        : `${this.apiHost}/v1/chat/completions`;
 
       console.log(`[${this.name}] 请求原生 API 进行编程任务... (Model: ${this.model})`);
 
       let messages = [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: 'user', content: userPrompt },
       ];
 
       let finalContent = '代码编写完毕。';
@@ -201,9 +216,9 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
           model: this.model,
           messages,
           tools: toolsSchema,
-          temperature: 0.1
+          temperature: 0.1,
         };
-        
+
         // Support for Minimax Native Reasoning Split
         // This prevents <think> tags from disrupting tool calls or content text
         if (this.apiHost.includes('minimaxi.com')) {
@@ -216,11 +231,11 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
-          signal: abortController.signal
+          signal: abortController.signal,
         });
         clearTimeout(hardTimeoutId);
 
@@ -231,41 +246,47 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
         const data = await res.json();
         totalTokens += data.usage?.total_tokens || 0;
-        
+
         if (data.base_resp && data.base_resp.status_code !== 0) {
-          throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+          throw new Error(
+            `MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`,
+          );
         } else if (data.error) {
           throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
         }
-        
+
         if (!data.choices || data.choices.length === 0) {
-          throw new Error(`API 响应结构异常: ${JSON.stringify(data).substring(0,200)}`);
+          throw new Error(`API 响应结构异常: ${JSON.stringify(data).substring(0, 200)}`);
         }
-        
+
         const message = data.choices[0].message;
-        
+
         // Emit Reasoning Process as Telemetry
         if (message.reasoning_details && message.reasoning_details.length > 0) {
-          const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+          const reasoningText = message.reasoning_details.map((r) => r.text).join('\n');
           if (typeof this.emit === 'function') {
             this.emit('action', { type: 'think', content: reasoningText.trim() });
           }
         } else {
           // Fallback for non-Minimax models or if reasoning_split is not supported
-          const contentStr = message.content || "";
+          const contentStr = message.content || '';
           const thinkMatch = contentStr.match(/<think>([\s\S]*?)<\/think>/i);
           if (thinkMatch && typeof this.emit === 'function') {
-             this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+            this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
           }
         }
-        
+
         messages.push(message);
 
         const nativeToolCalls = message.tool_calls || [];
 
         if (nativeToolCalls.length === 0) {
           if (step === 0) {
-            this._log && this._log('INFO', `[${this.name}] ⚠️ 未检测到原生的 tool_calls。模型回复: ${message.content?.substring(0, 100)}...`);
+            this._log &&
+              this._log(
+                'INFO',
+                `[${this.name}] ⚠️ 未检测到原生的 tool_calls。模型回复: ${message.content?.substring(0, 100)}...`,
+              );
           }
           finalContent = message.content || finalContent;
           break; // 跳出大循环
@@ -279,7 +300,10 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
             try {
               args = JSON.parse(toolCall.function.arguments);
             } catch (e) {
-              console.error(`[${this.name}] 解析工具调用参数失败，尝试 repair:`, toolCall.function.arguments);
+              console.error(
+                `[${this.name}] 解析工具调用参数失败，尝试 repair:`,
+                toolCall.function.arguments,
+              );
               try {
                 args = JSON.parse(jsonrepair(toolCall.function.arguments));
               } catch (e2) {
@@ -287,12 +311,15 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
                 messages.push({
                   role: 'tool',
                   tool_call_id: toolCall.id,
-                  content: JSON.stringify({ success: false, error: 'Invalid arguments format JSON parse error' })
+                  content: JSON.stringify({
+                    success: false,
+                    error: 'Invalid arguments format JSON parse error',
+                  }),
                 });
                 continue;
               }
             }
-            
+
             let toolResultObj;
             if (tool === 'write_file' || tool === 'edit_file') {
               const fileOpResult = await this.executeTool(tool, args);
@@ -308,33 +335,39 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
               toolResultObj = await this.executeTool(tool, args);
             }
 
-            let textOutput = typeof toolResultObj === 'string' ? toolResultObj : JSON.stringify(toolResultObj);
+            let textOutput =
+              typeof toolResultObj === 'string' ? toolResultObj : JSON.stringify(toolResultObj);
             if (textOutput.length > 8000) {
               textOutput = textOutput.substring(0, 8000) + '... (output truncated due to length)';
             }
-            
+
             messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
-              content: textOutput
+              content: textOutput,
             });
           }
         }
       }
 
-      const { created: filesCreated, modified: filesModified } = await this._detectFileChanges(projectRoot, startTime);
+      const { created: filesCreated, modified: filesModified } = await this._detectFileChanges(
+        projectRoot,
+        startTime,
+      );
 
-      return this._formatResult({
-        task_id: task.id,
-        success: true,
-        summary: finalContent,
-        files_created: filesCreated,
-        files_modified: filesModified,
-        tool_calls_executed: executedCount,
-        tokens_used: totalTokens,
-        duration_ms: Date.now() - startTime
-      }, startTime);
-
+      return this._formatResult(
+        {
+          task_id: task.id,
+          success: true,
+          summary: finalContent,
+          files_created: filesCreated,
+          files_modified: filesModified,
+          tool_calls_executed: executedCount,
+          tokens_used: totalTokens,
+          duration_ms: Date.now() - startTime,
+        },
+        startTime,
+      );
     } catch (error) {
       console.error(`[${this.name}] 执行异常: `, error.message);
       return this.handleError(error);
@@ -344,49 +377,49 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
   async _detectFileChanges(dir, startTime) {
     const changes = { created: [], modified: [] };
     const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.appmaker', '.daemon'];
-    
+
     const scan = async (currentDir) => {
       try {
         const entries = await fs.readdir(currentDir, { withFileTypes: true });
         for (const entry of entries) {
-           if (entry.isDirectory() && ignoreDirs.includes(entry.name)) continue;
-           const fullPath = path.join(currentDir, entry.name);
-           if (entry.isDirectory()) {
-             await scan(fullPath);
-           } else {
-             const stat = await fs.stat(fullPath);
-             // 允许 1000ms 时间差容错
-             if (stat.mtimeMs >= startTime - 1000) {
-                const relPath = path.relative(dir, fullPath).replace(/\\/g, '/');
-                if (stat.birthtimeMs >= startTime - 1000) {
-                  changes.created.push(relPath);
-                } else {
-                  changes.modified.push(relPath);
-                }
-             }
-           }
+          if (entry.isDirectory() && ignoreDirs.includes(entry.name)) continue;
+          const fullPath = path.join(currentDir, entry.name);
+          if (entry.isDirectory()) {
+            await scan(fullPath);
+          } else {
+            const stat = await fs.stat(fullPath);
+            // 允许 1000ms 时间差容错
+            if (stat.mtimeMs >= startTime - 1000) {
+              const relPath = path.relative(dir, fullPath).replace(/\\/g, '/');
+              if (stat.birthtimeMs >= startTime - 1000) {
+                changes.created.push(relPath);
+              } else {
+                changes.modified.push(relPath);
+              }
+            }
+          }
         }
       } catch (e) {
         // 忽略错误
       }
     };
-    
+
     await scan(dir);
     return changes;
   }
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
-    
+
     // Capture <think> block and emit to telemetry before stripping
     const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
     if (thinkMatch && typeof this.emit === 'function') {
       this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
     }
-    
+
     // Strip <think>...</think> reasoning tags which corrupt JSON matching
     output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    
+
     // 1. Try code blocks
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     if (codeBlocks.length > 0) {
@@ -396,27 +429,40 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
         } catch (e) {
           try {
             return JSON.parse(jsonrepair(match[1].trim()));
-          } catch(e2) {}
+          } catch (e2) {
+            /* ignore repair errors */
+          }
         }
       }
     }
-    
+
     // 2. Try JSON Object syntaxes through brace matching
     const braceCount = (output.match(/[{}]/g) || []).length;
     if (braceCount >= 2) {
-      let depth = 0, validEnd = -1, firstBrace = output.indexOf('{');
+      let depth = 0,
+        validEnd = -1,
+        firstBrace = output.indexOf('{');
       if (firstBrace !== -1) {
         for (let i = firstBrace; i < output.length; i++) {
           if (output[i] === '{') depth++;
           else if (output[i] === '}') {
             depth--;
-            if (depth === 0) { validEnd = i; break; }
+            if (depth === 0) {
+              validEnd = i;
+              break;
+            }
           }
         }
         if (validEnd > firstBrace) {
           const candidate = output.substring(firstBrace, validEnd + 1);
-          try { return JSON.parse(candidate); } catch(e) {
-            try { return JSON.parse(jsonrepair(candidate)); } catch {}
+          try {
+            return JSON.parse(candidate);
+          } catch (e) {
+            try {
+              return JSON.parse(jsonrepair(candidate));
+            } catch (_) {
+              /* ignore repair errors */
+            }
           }
         }
       }
@@ -426,7 +472,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
     try {
       return JSON.parse(jsonrepair(output));
     } catch {
-       console.warn(`[${this.name}] 全文 JSON 解析失败`);
+      console.warn(`[${this.name}] 全文 JSON 解析失败`);
     }
 
     return null;
@@ -442,13 +488,13 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
         files_modified: rawResult.files_modified || [],
         tests_run: false,
         summary: rawResult.summary || '',
-        tool_calls_executed: rawResult.tool_calls_executed || 0
+        tool_calls_executed: rawResult.tool_calls_executed || 0,
       },
       metrics: {
-        duration_ms: rawResult.duration_ms || (Date.now() - startTime),
-        tokens_used: rawResult.tokens_used || 0
+        duration_ms: rawResult.duration_ms || Date.now() - startTime,
+        tokens_used: rawResult.tokens_used || 0,
       },
-      errors: rawResult.errors || []
+      errors: rawResult.errors || [],
     };
   }
 }

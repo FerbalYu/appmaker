@@ -25,7 +25,9 @@ export class Logger {
     const content = typeof message === 'object' ? JSON.stringify(message, null, 2) : message;
     try {
       await fs.appendFile(filepath, `[${timestamp}] ${content}\n`, 'utf-8');
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async log(level, category, filename, message, meta = {}) {

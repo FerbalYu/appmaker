@@ -42,12 +42,12 @@ try {
 
 ### 测试覆盖
 
-| 代码类型 | 最低覆盖率 | 说明 |
-|----------|------------|------|
-| 核心业务逻辑 | ≥ 80% | Service 层核心函数 |
-| 工具函数 | ≥ 90% | utils/ 中的公共函数 |
-| API 路由 | 100% | 所有 endpoint 必须有测试 |
-| 边界情况 | 必须覆盖 | 空值、异常值、超大值 |
+| 代码类型     | 最低覆盖率 | 说明                     |
+| ------------ | ---------- | ------------------------ |
+| 核心业务逻辑 | ≥ 80%      | Service 层核心函数       |
+| 工具函数     | ≥ 90%      | utils/ 中的公共函数      |
+| API 路由     | 100%       | 所有 endpoint 必须有测试 |
+| 边界情况     | 必须覆盖   | 空值、异常值、超大值     |
 
 ### 代码可读性
 
@@ -86,15 +86,15 @@ const getDefaultValue = (a, b, c) => {
 <footer>
 ```
 
-| type | 说明 |
-|------|------|
-| feat | 新功能 |
-| fix | Bug 修复 |
-| docs | 文档更新 |
-| style | 格式调整 |
-| refactor | 重构 |
-| test | 测试相关 |
-| chore | 构建/工具 |
+| type     | 说明      |
+| -------- | --------- |
+| feat     | 新功能    |
+| fix      | Bug 修复  |
+| docs     | 文档更新  |
+| style    | 格式调整  |
+| refactor | 重构      |
+| test     | 测试相关  |
+| chore    | 构建/工具 |
 
 ```bash
 # 正确示例
@@ -128,18 +128,22 @@ app.post('/users', (req, res) => {
 });
 
 // ✓ 正确：验证输入
-app.post('/users', [
-  body('email').isEmail(),
-  body('name').isLength({ min: 1, max: 100 }),
-  body('age').optional().isInt({ min: 0 })
-], (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-  const user = req.body;
-  db.save(user);
-});
+app.post(
+  '/users',
+  [
+    body('email').isEmail(),
+    body('name').isLength({ min: 1, max: 100 }),
+    body('age').optional().isInt({ min: 0 }),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    const user = req.body;
+    db.save(user);
+  },
+);
 ```
 
 ### 响应格式

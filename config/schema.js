@@ -13,7 +13,7 @@ export function validateConfig(config) {
     }
     if (config.agents.opencode) {
       if (typeof config.agents.opencode.timeout_ms !== 'number') {
-        errors.push("agents.opencode.timeout_ms must be a number");
+        errors.push('agents.opencode.timeout_ms must be a number');
       }
     }
   }

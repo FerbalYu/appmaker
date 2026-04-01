@@ -11,14 +11,14 @@ export const MEMORY_TYPE = {
   EPISODIC: 'episodic',
   SEMANTIC: 'semantic',
   PROCEDURAL: 'procedural',
-  WORKING: 'working'
+  WORKING: 'working',
 };
 
 export const PRIORITY = {
   LOW: 0,
   NORMAL: 1,
   HIGH: 2,
-  CRITICAL: 3
+  CRITICAL: 3,
 };
 
 export class MemoryStore {
@@ -27,28 +27,28 @@ export class MemoryStore {
       dbPath: config.dbPath || './.daemon/memory.db',
       maxMemoryAge: config.maxMemoryAge || 7 * 24 * 60 * 60 * 1000,
       autoCleanup: config.autoCleanup !== false,
-      logger: config.logger
+      logger: config.logger,
     };
 
     this.db = {
       semantic: new Map(),
       episodic: new Map(),
       procedural: new Map(),
-      working: new Map()
+      working: new Map(),
     };
 
     this.indexes = {
       byType: new Map(),
       byPriority: new Map(),
       byTimestamp: new Map(),
-      byTag: new Map()
+      byTag: new Map(),
     };
 
     this.logger = this.config.logger || {
       info: () => {},
       debug: () => {},
       warn: () => {},
-      error: () => {}
+      error: () => {},
     };
 
     this.stats = {
@@ -56,7 +56,7 @@ export class MemoryStore {
       writes: 0,
       hits: 0,
       misses: 0,
-      cleanupCount: 0
+      cleanupCount: 0,
     };
   }
 
@@ -112,7 +112,7 @@ export class MemoryStore {
       byType: new Map(),
       byPriority: new Map(),
       byTimestamp: new Map(),
-      byTag: new Map()
+      byTag: new Map(),
     };
 
     for (const [type, memories] of Object.entries(this.db)) {
@@ -153,7 +153,7 @@ export class MemoryStore {
       tags: options.tags || [],
       metadata: options.metadata || {},
       accessCount: 0,
-      lastAccess: Date.now()
+      lastAccess: Date.now(),
     };
 
     if (!this.db[type]) {
@@ -195,7 +195,7 @@ export class MemoryStore {
       let match = true;
 
       if (filters.tags?.length) {
-        const hasAllTags = filters.tags.every(tag => memory.tags?.includes(tag));
+        const hasAllTags = filters.tags.every((tag) => memory.tags?.includes(tag));
         if (!hasAllTags) match = false;
       }
 
@@ -256,7 +256,7 @@ export class MemoryStore {
       ...updates,
       id,
       type,
-      timestamp: memory.timestamp
+      timestamp: memory.timestamp,
     };
 
     this.db[type].set(id, updated);
@@ -284,7 +284,7 @@ export class MemoryStore {
     const regex = new RegExp(pattern);
     const toDelete = [];
 
-    for (const [id, memory] of (this.db[type] || new Map())) {
+    for (const [id, memory] of this.db[type] || new Map()) {
       if (regex.test(id) || regex.test(JSON.stringify(memory.data))) {
         toDelete.push(id);
       }
@@ -359,8 +359,8 @@ export class MemoryStore {
       ...this.stats,
       totalMemories: Array.from(Object.values(this.db)).reduce((sum, m) => sum + m.size, 0),
       byType: Object.fromEntries(
-        Object.entries(this.db).map(([type, memories]) => [type, memories.size])
-      )
+        Object.entries(this.db).map(([type, memories]) => [type, memories.size]),
+      ),
     };
   }
 
@@ -384,7 +384,7 @@ export class MemoryStore {
         id: memory.id,
         priority: memory.priority,
         tags: memory.tags,
-        metadata: memory.metadata
+        metadata: memory.metadata,
       });
     }
   }
@@ -407,14 +407,18 @@ export class ContextualMemory extends MemoryStore {
       context.shift();
     }
 
-    await this.store(MEMORY_TYPE.EPISODIC, {
-      contextId,
-      memory,
-      sequence: context.length
-    }, {
-      tags: [`context:${contextId}`],
-      priority: PRIORITY.NORMAL
-    });
+    await this.store(
+      MEMORY_TYPE.EPISODIC,
+      {
+        contextId,
+        memory,
+        sequence: context.length,
+      },
+      {
+        tags: [`context:${contextId}`],
+        priority: PRIORITY.NORMAL,
+      },
+    );
 
     return context;
   }
@@ -422,20 +426,24 @@ export class ContextualMemory extends MemoryStore {
   async getContext(contextId, limit = 10) {
     const memories = await this.query(MEMORY_TYPE.EPISODIC, {
       tags: [`context:${contextId}`],
-      limit
+      limit,
     });
 
-    return memories.map(m => m.data.memory).reverse();
+    return memories.map((m) => m.data.memory).reverse();
   }
 
   async mergeContext(contextId, summary) {
-    return this.store(MEMORY_TYPE.SEMANTIC, {
-      contextId,
-      summary,
-      merged: true
-    }, {
-      tags: [`context:${contextId}`, 'merged'],
-      priority: PRIORITY.HIGH
-    });
+    return this.store(
+      MEMORY_TYPE.SEMANTIC,
+      {
+        contextId,
+        summary,
+        merged: true,
+      },
+      {
+        tags: [`context:${contextId}`, 'merged'],
+        priority: PRIORITY.HIGH,
+      },
+    );
   }
 }

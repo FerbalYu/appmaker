@@ -17,6 +17,7 @@ async function cleanup() {
   try {
     await fs.rm(testDir, { recursive: true, force: true });
   } catch (error) {
+    /* ignore cleanup errors */
   }
 }
 
@@ -25,30 +26,38 @@ async function testMemoryStore() {
 
   const memory = new MemoryStore({
     dbPath: path.join(testDir, 'memory-test.db'),
-    logger: console
+    logger: console,
   });
 
   await memory.initialize();
 
-  await memory.store('semantic', {
-    project: 'appMaker',
-    version: '2.0.0',
-    features: ['agent', 'daemon', 'persistence']
-  }, {
-    tags: ['project', 'core'],
-    priority: 2
-  });
+  await memory.store(
+    'semantic',
+    {
+      project: 'appMaker',
+      version: '2.0.0',
+      features: ['agent', 'daemon', 'persistence'],
+    },
+    {
+      tags: ['project', 'core'],
+      priority: 2,
+    },
+  );
 
-  await memory.store('episodic', {
-    action: 'test_run',
-    result: 'success'
-  }, {
-    tags: ['test', 'run'],
-    priority: 1
-  });
+  await memory.store(
+    'episodic',
+    {
+      action: 'test_run',
+      result: 'success',
+    },
+    {
+      tags: ['test', 'run'],
+      priority: 1,
+    },
+  );
 
   const memories = await memory.query('semantic', {
-    tags: ['project']
+    tags: ['project'],
   });
 
   console.assert(memories.length === 1, '语义记忆查询失败');
@@ -66,31 +75,31 @@ async function testSessionManager() {
   console.log('\n📝 测试 SessionManager...');
 
   const memory = new MemoryStore({
-    dbPath: path.join(testDir, 'session-memory.db')
+    dbPath: path.join(testDir, 'session-memory.db'),
   });
   await memory.initialize();
 
   const sessions = new SessionManager({
     store: memory,
     logger: console,
-    maxIdleTime: 10000
+    maxIdleTime: 10000,
   });
 
   const session1 = await sessions.create({
     name: 'test-session-1',
     mode: 'background',
-    metadata: { test: true }
+    metadata: { test: true },
   });
 
   console.assert(session1.id, '会话创建失败');
   console.log(`  ✅ 会话已创建: ${session1.name} (${session1.id})`);
 
   await sessions.sendMessage(session1.id, 'Hello, daemon!', {
-    type: 'user'
+    type: 'user',
   });
 
   await sessions.sendMessage(session1.id, 'Welcome back!', {
-    type: 'agent'
+    type: 'agent',
   });
 
   const history = await sessions.getHistory(session1.id);
@@ -110,7 +119,7 @@ async function testTaskQueue() {
 
   const queue = new TaskQueue({
     logger: console,
-    maxConcurrent: 2
+    maxConcurrent: 2,
   });
 
   await queue.initialize();
@@ -118,20 +127,20 @@ async function testTaskQueue() {
   const task1 = await queue.enqueue({
     name: 'task-1',
     type: 'test',
-    priority: TASK_PRIORITY.HIGH
+    priority: TASK_PRIORITY.HIGH,
   });
 
   const task2 = await queue.enqueue({
     name: 'task-2',
     type: 'test',
     priority: TASK_PRIORITY.NORMAL,
-    dependencies: [task1.id]
+    dependencies: [task1.id],
   });
 
   const task3 = await queue.enqueue({
     name: 'task-3',
     type: 'test',
-    priority: TASK_PRIORITY.LOW
+    priority: TASK_PRIORITY.LOW,
   });
 
   console.log(`  ✅ 任务入队: 3 个任务`);
@@ -161,11 +170,13 @@ async function testDaemonCore() {
     dataDir: path.join(testDir, 'daemon'),
     heartbeatInterval: 5000,
     autoSaveInterval: 10000,
-    recoveryEnabled: true
+    recoveryEnabled: true,
   });
 
   daemon.on('heartbeat', (health) => {
-    console.log(`  💓 心跳: ${health.state}, 内存: ${Math.round(health.memory.heapUsed / 1024 / 1024)}MB`);
+    console.log(
+      `  💓 心跳: ${health.state}, 内存: ${Math.round(health.memory.heapUsed / 1024 / 1024)}MB`,
+    );
   });
 
   await daemon.start();
@@ -173,14 +184,14 @@ async function testDaemonCore() {
   console.log(`  ✅ 守护进程已启动 (PID: ${daemon.pid})`);
 
   const session = await daemon.createSession({
-    name: 'integration-test-session'
+    name: 'integration-test-session',
   });
   console.log(`  ✅ 创建会话: ${session.name}`);
 
   await daemon.processTask({
     name: 'integration-test-task',
     type: 'test',
-    priority: TASK_PRIORITY.NORMAL
+    priority: TASK_PRIORITY.NORMAL,
   });
   console.log('  ✅ 任务入队');
 
@@ -189,7 +200,7 @@ async function testDaemonCore() {
   console.log(`     已处理任务: ${status.stats.tasksProcessed}`);
   console.log(`     会话总数: ${status.stats.sessionsCreated}`);
 
-  await new Promise(resolve => setTimeout(resolve, 6000));
+  await new Promise((resolve) => setTimeout(resolve, 6000));
 
   await daemon.stop();
   console.log('  ✅ 守护进程已停止');
@@ -201,7 +212,7 @@ async function testPersistence() {
 
   let daemon1 = await createDaemon({
     dataDir: path.join(testDir, 'persist-test'),
-    autoSaveInterval: 5000
+    autoSaveInterval: 5000,
   });
 
   await daemon1.start();
@@ -217,11 +228,11 @@ async function testPersistence() {
   await daemon1.stop();
 
   console.log('  ⏳ 等待重启...');
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
   const daemon2 = await createDaemon({
     dataDir: path.join(testDir, 'persist-test'),
-    recoveryEnabled: true
+    recoveryEnabled: true,
   });
 
   await daemon2.initialize();
@@ -253,7 +264,6 @@ export async function testDaemon() {
     console.log('='.repeat(60));
     console.log(`✅ 所有测试通过! (耗时: ${duration}s)`);
     console.log('='.repeat(60));
-
   } catch (error) {
     console.error('\n❌ 测试失败:', error.message);
     if (process.env.DEBUG) {

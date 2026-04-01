@@ -1,6 +1,6 @@
 /**
  * Execution Engine
- * 
+ *
  * 核心特性：
  * - 智能重试机制（网络错误自动重试）
  * - 任务超时控制（防止无限等待）
@@ -29,9 +29,9 @@ export class ExecutionEngine extends EventEmitter {
       max_concurrent_tasks: 3,
       token_budget: 100000,
       idle_timeout_ms: 1800000,
-      ...config
+      ...config,
     };
-    
+
     this.tasks = new Map();
     this.checkpoints = [];
     this.logs = [];
@@ -45,7 +45,7 @@ export class ExecutionEngine extends EventEmitter {
       native_reviewer_model: config.native_reviewer_model || 'MiniMax-Text-01',
       native_coder_model: config.native_coder_model || 'MiniMax-Text-01',
       request_timeout: this.config.task_timeout,
-      max_retries: this.config.max_retries
+      max_retries: this.config.max_retries,
     });
 
     this.dispatcher.registerAgent('native-reviewer', () => {
@@ -53,9 +53,11 @@ export class ExecutionEngine extends EventEmitter {
         model: config.native_reviewer_model,
         api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
         api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST,
-        project_root: this.projectRoot
+        project_root: this.projectRoot,
       });
-      adapter.on('action', (act) => this.emit('agent:action', { ...act, agent: 'native-reviewer' }));
+      adapter.on('action', (act) =>
+        this.emit('agent:action', { ...act, agent: 'native-reviewer' }),
+      );
       return adapter;
     });
     this.dispatcher.registerAgent('native-coder', () => {
@@ -63,7 +65,7 @@ export class ExecutionEngine extends EventEmitter {
         model: config.native_coder_model,
         api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
         api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST,
-        project_root: this.projectRoot
+        project_root: this.projectRoot,
       });
       adapter.on('action', (act) => this.emit('agent:action', { ...act, agent: 'native-coder' }));
       return adapter;
@@ -77,7 +79,10 @@ export class ExecutionEngine extends EventEmitter {
    */
   async execute(plan) {
     this._log('INFO', `🚀 开始执行计划: ${plan.project.name}`);
-    this._log('INFO', `📋 总任务数: ${plan.tasks.length} | Token 预算: ${this.config.token_budget}`);
+    this._log(
+      'INFO',
+      `📋 总任务数: ${plan.tasks.length} | Token 预算: ${this.config.token_budget}`,
+    );
 
     const results = [];
     const startTime = Date.now();
@@ -116,7 +121,10 @@ export class ExecutionEngine extends EventEmitter {
 
     this._log('INFO', `\n${'═'.repeat(50)}`);
     this._log('INFO', `📊 执行摘要:`);
-    this._log('INFO', `   成功: ${summary.done} | 失败: ${summary.failed} | 需人工: ${summary.needs_human}`);
+    this._log(
+      'INFO',
+      `   成功: ${summary.done} | 失败: ${summary.failed} | 需人工: ${summary.needs_human}`,
+    );
     this._log('INFO', `   Token 消耗: ${this.tokenUsage.total} / ${this.config.token_budget}`);
     this._log('INFO', `   总耗时: ${Math.round(summary.duration_ms / 1000)}s`);
     this._log('INFO', `${'═'.repeat(50)}`);
@@ -126,7 +134,7 @@ export class ExecutionEngine extends EventEmitter {
       status: summary.failed > 0 ? 'partial' : 'success',
       results,
       summary,
-      tokenUsage: this.tokenUsage
+      tokenUsage: this.tokenUsage,
     };
   }
 
@@ -137,23 +145,27 @@ export class ExecutionEngine extends EventEmitter {
   async _executeMilestone(milestone, plan) {
     const results = [];
     const milestoneTasks = milestone.tasks
-      .map(id => plan.tasks.find(t => t.id === id))
-      .filter(t => {
+      .map((id) => plan.tasks.find((t) => t.id === id))
+      .filter((t) => {
         if (!t) this._log('WARN', `任务 ID ${id} 未找到`);
         return Boolean(t);
       });
 
     const taskGraph = this._buildTaskGraph(milestoneTasks);
     const maxConcurrent = Math.min(this.config.max_concurrent_tasks, milestoneTasks.length);
-    
+
     const executing = new Map();
     const completed = new Map();
 
     while (completed.size < milestoneTasks.length) {
       const availableTasks = this._getAvailableTasks(taskGraph, executing, completed);
-      
-      if (executing.size === 0 && availableTasks.length === 0 && completed.size < milestoneTasks.length) {
-        const blocked = milestoneTasks.filter(t => !completed.has(t.id) && !executing.has(t.id));
+
+      if (
+        executing.size === 0 &&
+        availableTasks.length === 0 &&
+        completed.size < milestoneTasks.length
+      ) {
+        const blocked = milestoneTasks.filter((t) => !completed.has(t.id) && !executing.has(t.id));
         if (blocked.length > 0) {
           this._log('ERROR', `检测到死锁！${blocked.length} 个任务无法完成`);
           for (const task of blocked) {
@@ -168,9 +180,9 @@ export class ExecutionEngine extends EventEmitter {
       while (executing.size < maxConcurrent && availableTasks.length > 0 && !this.halt) {
         const task = availableTasks.shift();
         this._log('INFO', `[${task.id}] 调度执行 (依赖: ${task.dependencies?.length || 0})`);
-        
+
         const promise = this._executeTaskWithTimeout(task, plan)
-          .then(result => {
+          .then((result) => {
             results.push(result);
             this.tasks.set(task.id, { status: result.status, result });
             this._reportProgress(task, result);
@@ -178,7 +190,7 @@ export class ExecutionEngine extends EventEmitter {
             completed.set(task.id, result);
             return result;
           })
-          .catch(error => {
+          .catch((error) => {
             const errorResult = { task_id: task.id, status: 'failed', error: error.message };
             results.push(errorResult);
             this.tasks.set(task.id, { status: 'failed', result: errorResult });
@@ -216,7 +228,7 @@ export class ExecutionEngine extends EventEmitter {
       graph.set(task.id, {
         task,
         dependencies: new Set(task.dependencies || []),
-        dependents: new Set()
+        dependents: new Set(),
       });
     }
     for (const [id, node] of graph) {
@@ -237,12 +249,13 @@ export class ExecutionEngine extends EventEmitter {
     const available = [];
     for (const [id, node] of graph) {
       if (completed.has(id) || executing.has(id)) continue;
-      
-      const depsSatisfied = [...node.dependencies].every(depId => 
-        (completed.has(depId) && completed.get(depId)?.status === 'done') ||
-        (this.tasks.has(depId) && this.tasks.get(depId)?.status === 'done')
+
+      const depsSatisfied = [...node.dependencies].every(
+        (depId) =>
+          (completed.has(depId) && completed.get(depId)?.status === 'done') ||
+          (this.tasks.has(depId) && this.tasks.get(depId)?.status === 'done'),
       );
-      
+
       if (depsSatisfied) {
         available.push(node.task);
       }
@@ -267,13 +280,18 @@ export class ExecutionEngine extends EventEmitter {
   _trackTokenUsage(result) {
     const codeTokens = result.code_result?.metrics?.tokens_used || 0;
     const reviewTokens = result.review_result?.output?.metrics?.tokens_used || 0;
-    
+
     this.tokenUsage.total += codeTokens + reviewTokens;
-    this.tokenUsage.byAgent['native-coder'] = (this.tokenUsage.byAgent['native-coder'] || 0) + codeTokens;
-    this.tokenUsage.byAgent['native-reviewer'] = (this.tokenUsage.byAgent['native-reviewer'] || 0) + reviewTokens;
+    this.tokenUsage.byAgent['native-coder'] =
+      (this.tokenUsage.byAgent['native-coder'] || 0) + codeTokens;
+    this.tokenUsage.byAgent['native-reviewer'] =
+      (this.tokenUsage.byAgent['native-reviewer'] || 0) + reviewTokens;
 
     if (this.tokenUsage.total > this.config.token_budget) {
-      this._log('WARN', `⚠️ Token 消耗超出预算 (${this.tokenUsage.total} > ${this.config.token_budget})`);
+      this._log(
+        'WARN',
+        `⚠️ Token 消耗超出预算 (${this.tokenUsage.total} > ${this.config.token_budget})`,
+      );
       this.halt = true;
       this.emit('budget:exceeded', { usage: this.tokenUsage, budget: this.config.token_budget });
     }
@@ -309,15 +327,15 @@ export class ExecutionEngine extends EventEmitter {
           description: task.description,
           subtasks: task.subtasks || [],
           files: task.files || [],
-          context
+          context,
         });
       },
       {
         maxRetries: this.config.max_retries,
         taskId: task.id,
         phase: 'code',
-        context
-      }
+        context,
+      },
     );
 
     if (!codeResult || codeResult.status === 'failed' || codeResult.success === false) {
@@ -331,7 +349,7 @@ export class ExecutionEngine extends EventEmitter {
     const filesCreated = codeResult.output?.files_created || [];
     const filesModified = codeResult.output?.files_modified || [];
     const totalFilesChanged = filesCreated.length + filesModified.length;
-    
+
     if (totalFilesChanged === 0) {
       this._log('WARN', `[${task.id}] ⚠️ native-coder 本次执行没有生成或修改任何文件`);
     } else {
@@ -346,16 +364,19 @@ export class ExecutionEngine extends EventEmitter {
           type: 'review',
           description: `评审任务: ${task.description}`,
           subtasks: task.subtasks || [],
-          files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
-          context
+          files: [
+            ...(codeResult.output?.files_created || []),
+            ...(codeResult.output?.files_modified || []),
+          ],
+          context,
         });
       },
       {
         maxRetries: this.config.max_retries,
         taskId: task.id,
         phase: 'review',
-        context
-      }
+        context,
+      },
     );
 
     this.emit('task:review', { task, result: reviewResult });
@@ -384,21 +405,30 @@ export class ExecutionEngine extends EventEmitter {
             id: `${task.id}_fix_${cycle}`,
             type: 'modify',
             description: fixPrompt,
-            files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
-            context
+            files: [
+              ...(codeResult.output?.files_created || []),
+              ...(codeResult.output?.files_modified || []),
+            ],
+            context,
           });
         },
         {
           maxRetries: this.config.max_retries,
           taskId: task.id,
           phase: 'fix',
-          context
-        }
+          context,
+        },
       );
 
       if (!codeResult) {
         this._log('ERROR', `[${task.id}] ❌ 修正失败`);
-        return { task_id: task.id, status: 'failed', phase: 'fix', cycle, error: 'Fix iteration failed' };
+        return {
+          task_id: task.id,
+          status: 'failed',
+          phase: 'fix',
+          cycle,
+          error: 'Fix iteration failed',
+        };
       }
 
       reviewResult = await this.dispatcher.dispatch({
@@ -406,13 +436,22 @@ export class ExecutionEngine extends EventEmitter {
         type: 'review',
         description: `重新评审: ${task.description}`,
         subtasks: task.subtasks || [],
-        files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
-        context
+        files: [
+          ...(codeResult.output?.files_created || []),
+          ...(codeResult.output?.files_modified || []),
+        ],
+        context,
       });
 
       if (!reviewResult) {
         this._log('ERROR', `[${task.id}] ❌ 重新评审失败`);
-        return { task_id: task.id, status: 'failed', phase: 're-review', cycle, error: 'Re-review failed' };
+        return {
+          task_id: task.id,
+          status: 'failed',
+          phase: 're-review',
+          cycle,
+          error: 'Re-review failed',
+        };
       }
 
       const newScore = reviewResult.output?.score ?? 100;
@@ -433,7 +472,7 @@ export class ExecutionEngine extends EventEmitter {
         score: reviewScore,
         issues: reviewIssues,
         comments: reviewComments,
-        code_result: codeResult
+        code_result: codeResult,
       };
     }
 
@@ -448,7 +487,7 @@ export class ExecutionEngine extends EventEmitter {
       score: reviewScore,
       cycles: cycle,
       code_result: codeResult,
-      review_result: reviewResult
+      review_result: reviewResult,
     };
     this.emit('task:done', { task, result: finalResult });
     return finalResult;
@@ -467,12 +506,17 @@ export class ExecutionEngine extends EventEmitter {
       if (context) context.abortController = abortController;
 
       let lastActionTime = Date.now();
-      const onAction = () => { lastActionTime = Date.now(); };
+      const onAction = () => {
+        lastActionTime = Date.now();
+      };
       this.on('agent:action', onAction);
 
       const heartbeatInterval = setInterval(() => {
         if (Date.now() - lastActionTime > this.config.idle_timeout_ms) {
-          this._log('ERROR', `[${taskId}] ⚠️ Agent 发呆超过 ${this.config.idle_timeout_ms / 1000}s, 触发心跳打断...`);
+          this._log(
+            'ERROR',
+            `[${taskId}] ⚠️ Agent 发呆超过 ${this.config.idle_timeout_ms / 1000}s, 触发心跳打断...`,
+          );
           abortController.abort(new Error('STALLED_HEARTBEAT'));
         }
       }, 10000);
@@ -480,34 +524,52 @@ export class ExecutionEngine extends EventEmitter {
       try {
         const result = await fn();
         if (result && result.success === false && result.error) {
-           const errObj = result.error;
-           const errMsg = typeof errObj === 'string' ? errObj : (errObj.message || errObj.type || JSON.stringify(errObj));
-           throw new Error(errMsg);
+          const errObj = result.error;
+          const errMsg =
+            typeof errObj === 'string'
+              ? errObj
+              : errObj.message || errObj.type || JSON.stringify(errObj);
+          throw new Error(errMsg);
         }
         return result;
       } catch (error) {
         lastError = error;
-        const isStalled = error.message === 'STALLED_HEARTBEAT' || error.name === 'AbortError' || (error.cause && error.cause.message === 'STALLED_HEARTBEAT');
-        
+        const isStalled =
+          error.message === 'STALLED_HEARTBEAT' ||
+          error.name === 'AbortError' ||
+          (error.cause && error.cause.message === 'STALLED_HEARTBEAT');
+
         if (this._isRetryableError(error) || isStalled) {
           if (attempt <= maxRetries) {
             let delay = Math.pow(2, attempt - 1) * 1000;
-            if (error.message && (error.message.includes('529') || error.message.includes('overloaded_error') || error.message.includes('429') || error.message.toLowerCase().includes('rate limit'))) {
+            if (
+              error.message &&
+              (error.message.includes('529') ||
+                error.message.includes('overloaded_error') ||
+                error.message.includes('429') ||
+                error.message.toLowerCase().includes('rate limit'))
+            ) {
               delay = 120 * 1000; // Force 120 seconds backoff for overload/rate-limits
             }
             const reason = isStalled ? '执行卡死发呆/超时中止' : error.message;
-            this._log('WARN', `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${reason}`);
+            this._log(
+              'WARN',
+              `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${reason}`,
+            );
             this.emit('task:retry_wait', {
               task_id: taskId,
               phase,
               delay_ms: delay,
               attempt,
               max_retries: maxRetries,
-              error: reason
+              error: reason,
             });
             await this._sleep(delay);
           } else {
-            this._log('ERROR', `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败: ${error.message}`);
+            this._log(
+              'ERROR',
+              `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败: ${error.message}`,
+            );
             return { success: false, error: lastError.message, status: 'failed' };
           }
         } else {
@@ -529,15 +591,35 @@ export class ExecutionEngine extends EventEmitter {
    */
   _isRetryableError(error) {
     const retryablePatterns = [
-      'timeout', 'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
-      'network', 'rate limit', '429', '500', '502', '503', '504',
-      'socket hang up', 'Request timeout', 'fetch', 'api error',
-      '响应结构异常', 'json', 'parse error',
-      '1000', '1001', '1002', '1024', '1033', '2045', '2056'
+      'timeout',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'ECONNREFUSED',
+      'network',
+      'rate limit',
+      '429',
+      '500',
+      '502',
+      '503',
+      '504',
+      'socket hang up',
+      'Request timeout',
+      'fetch',
+      'api error',
+      '响应结构异常',
+      'json',
+      'parse error',
+      '1000',
+      '1001',
+      '1002',
+      '1024',
+      '1033',
+      '2045',
+      '2056',
     ];
-    
+
     const errorMsg = (error?.message || '').toLowerCase();
-    return retryablePatterns.some(pattern => errorMsg.includes(pattern.toLowerCase()));
+    return retryablePatterns.some((pattern) => errorMsg.includes(pattern.toLowerCase()));
   }
 
   /**
@@ -545,7 +627,7 @@ export class ExecutionEngine extends EventEmitter {
    * @private
    */
   _sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async _buildContext(task, plan) {
@@ -554,7 +636,7 @@ export class ExecutionEngine extends EventEmitter {
       project_root: this.projectRoot,
       architecture_rules: await this._loadRule('architecture'),
       quality_rules: await this._loadRule('quality'),
-      checkpoint: this.checkpoints[this.checkpoints.length - 1]
+      checkpoint: this.checkpoints[this.checkpoints.length - 1],
     };
   }
 
@@ -572,13 +654,14 @@ export class ExecutionEngine extends EventEmitter {
     let issueList;
 
     if (issues.length > 0 && typeof issues[0] === 'string') {
-      issueList = issues.map((issue, i) =>
-        `${i + 1}. [待修复] ${issue}`
-      ).join('\n');
+      issueList = issues.map((issue, i) => `${i + 1}. [待修复] ${issue}`).join('\n');
     } else {
-      issueList = issues.map((issue, i) =>
-        `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file}\n   问题: ${issue.reason}\n   建议: ${issue.suggestion}`
-      ).join('\n');
+      issueList = issues
+        .map(
+          (issue, i) =>
+            `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file}\n   问题: ${issue.reason}\n   建议: ${issue.suggestion}`,
+        )
+        .join('\n');
     }
 
     if (!issueList) {
@@ -607,7 +690,8 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       if (typeof issue === 'string') {
         this._log('WARN', `  🟡 ${issue}`);
       } else {
-        const icon = issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : '🟢';
+        const icon =
+          issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : '🟢';
         this._log('WARN', `  ${icon} ${issue.title} (${issue.file || 'unknown'})`);
       }
     }
@@ -615,7 +699,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
 
   _reportProgress(task, result) {
     const total = this.tasks.size;
-    const done = [...this.tasks.values()].filter(t => t.status === 'done').length;
+    const done = [...this.tasks.values()].filter((t) => t.status === 'done').length;
     const pct = Math.round((done / total) * 100);
     console.log(`\n[PROGRESS] ${done}/${total} (${pct}%)`);
     console.log(`  █${'█'.repeat(Math.floor(pct / 5))}${'░'.repeat(20 - Math.floor(pct / 5))}`);
@@ -627,7 +711,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       name,
       timestamp: new Date().toISOString(),
       tasks: Object.fromEntries(this.tasks),
-      logs: this.logs.slice(-100)
+      logs: this.logs.slice(-100),
     };
     this.checkpoints.push(checkpoint);
 
@@ -636,18 +720,20 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
         path.join(dir, `${checkpoint.id}.json`),
-        JSON.stringify(checkpoint, null, 2)
+        JSON.stringify(checkpoint, null, 2),
       );
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     this._log('INFO', `检查点创建: ${name}`);
     return checkpoint.id;
   }
 
   _generateSummary(results, startTime) {
-    const done = results.filter(r => r.status === 'done').length;
-    const failed = results.filter(r => r.status === 'failed').length;
-    const needsHuman = results.filter(r => r.status === 'needs_human').length;
+    const done = results.filter((r) => r.status === 'done').length;
+    const failed = results.filter((r) => r.status === 'failed').length;
+    const needsHuman = results.filter((r) => r.status === 'needs_human').length;
     const totalCycles = results.reduce((sum, r) => sum + (r.cycles || 0), 0);
     const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / (results.length || 1);
 
@@ -658,7 +744,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       needs_human: needsHuman,
       total_review_cycles: totalCycles,
       average_score: Math.round(avgScore),
-      duration_ms: Date.now() - startTime
+      duration_ms: Date.now() - startTime,
     };
   }
 
@@ -672,7 +758,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
     try {
       const cp = await fs.readFile(
         path.join(this.projectRoot, '.appmaker', 'checkpoints', `${checkpointId}.json`),
-        'utf-8'
+        'utf-8',
       );
       const checkpoint = JSON.parse(cp);
       this.tasks = new Map(Object.entries(checkpoint.tasks));

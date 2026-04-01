@@ -83,13 +83,13 @@ import { mediator } from './mediator';
 
 ## 文件约束
 
-| 约束 | 限制 | 原因 |
-|------|------|------|
-| 单文件行数 | ≤ 500 行 | 易于阅读和维护 |
-| 函数长度 | ≤ 50 行 | 单一职责 |
-| 参数数量 | ≤ 4 个 | 减少复杂度 |
-| 嵌套深度 | ≤ 3 层 | 避免深层嵌套 |
-| 文件名 | 小写 + 下划线 / kebab-case | 统一风格 |
+| 约束       | 限制                       | 原因           |
+| ---------- | -------------------------- | -------------- |
+| 单文件行数 | ≤ 500 行                   | 易于阅读和维护 |
+| 函数长度   | ≤ 50 行                    | 单一职责       |
+| 参数数量   | ≤ 4 个                     | 减少复杂度     |
+| 嵌套深度   | ≤ 3 层                     | 避免深层嵌套   |
+| 文件名     | 小写 + 下划线 / kebab-case | 统一风格       |
 
 ### 规则检查示例
 
@@ -125,22 +125,22 @@ function processUserData(data) {
 
 ## 命名约束
 
-| 类型 | 规则 | 示例 |
-|------|------|------|
-| 文件名 | 小写下划线 | `user_service.js` |
-| 类名 | 大驼峰 | `UserService` |
-| 函数名 | 小驼峰 | `getUserById` |
-| 常量 | 全大写 | `MAX_RETRY_COUNT` |
-| 私有成员 | 下划线前缀 | `_privateMethod` |
-| 测试文件 | `.test.js` 或 `_test.js` | `user.test.js` |
+| 类型     | 规则                     | 示例              |
+| -------- | ------------------------ | ----------------- |
+| 文件名   | 小写下划线               | `user_service.js` |
+| 类名     | 大驼峰                   | `UserService`     |
+| 函数名   | 小驼峰                   | `getUserById`     |
+| 常量     | 全大写                   | `MAX_RETRY_COUNT` |
+| 私有成员 | 下划线前缀               | `_privateMethod`  |
+| 测试文件 | `.test.js` 或 `_test.js` | `user.test.js`    |
 
 ## 架构违规处理
 
-| 违规类型 | 处理方式 |
-|----------|----------|
-| 分层违规 | Lint 报错，拒绝合并 |
-| 循环依赖 | Lint 报错，拒绝合并 |
-| 文件过长 | Lint 警告，提醒拆分 |
+| 违规类型   | 处理方式            |
+| ---------- | ------------------- |
+| 分层违规   | Lint 报错，拒绝合并 |
+| 循环依赖   | Lint 报错，拒绝合并 |
+| 文件过长   | Lint 警告，提醒拆分 |
 | 硬编码配置 | Lint 报错，必须修复 |
 
 ## Lint 规则文件
@@ -152,9 +152,12 @@ function processUserData(data) {
 {
   "rules": {
     "no-circular-dependency": "error",
-    "layer-imports": ["error", {
-      "allowedLayers": ["ui->api", "api->service", "service->data"]
-    }],
+    "layer-imports": [
+      "error",
+      {
+        "allowedLayers": ["ui->api", "api->service", "service->data"]
+      }
+    ],
     "max-file-lines": ["warn", 500],
     "max-function-length": ["warn", 50],
     "no-hardcoded-config": "error"

@@ -21,7 +21,7 @@ export class PersistentDaemon {
       workingDir: config.workingDir || process.cwd(),
       dataDir: config.dataDir || path.join(process.cwd(), '.daemon'),
       logLevel: config.logLevel || 'info',
-      ...config
+      ...config,
     };
 
     this.daemon = null;
@@ -44,7 +44,7 @@ export class PersistentDaemon {
         heartbeatInterval: options.heartbeatInterval || 30000,
         autoSaveInterval: options.autoSaveInterval || 60000,
         recoveryEnabled: options.recoveryEnabled !== false,
-        maxRetries: options.maxRetries || 3
+        maxRetries: options.maxRetries || 3,
       });
 
       this.daemon.on('start', (manifest) => {
@@ -57,7 +57,7 @@ export class PersistentDaemon {
         console.log(`💓 心跳 [${new Date().toLocaleTimeString()}]`, {
           state: health.state,
           uptime: Math.floor(health.uptime / 1000) + 's',
-          memory: Math.round(health.memory.heapUsed / 1024 / 1024) + 'MB'
+          memory: Math.round(health.memory.heapUsed / 1024 / 1024) + 'MB',
         });
       });
 
@@ -81,7 +81,6 @@ export class PersistentDaemon {
 
       this.isRunning = true;
       return this.daemon;
-
     } catch (error) {
       console.error('❌ 启动失败:', error.message);
       throw error;
@@ -99,7 +98,7 @@ export class PersistentDaemon {
   async _startInteractive() {
     const rl = createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
 
     const prompt = () => {
@@ -134,7 +133,7 @@ export class PersistentDaemon {
 
   async _handleCommand(command, args) {
     switch (command) {
-      case 'status':
+      case 'status': {
         const status = this.daemon.getStatus();
         console.log('\n📊 守护进程状态:');
         console.log('  状态:', status.state);
@@ -144,29 +143,32 @@ export class PersistentDaemon {
         console.log('  会话总数:', status.stats.sessionsCreated);
         console.log();
         break;
+      }
 
-      case 'sessions':
+      case 'sessions': {
         const sessions = this.daemon.getSessions().list();
         console.log('\n📝 会话列表:', sessions.length);
-        for (const session of sessions) {
-          console.log(`  - ${session.name} [${session.state}]`);
+        for (const s of sessions) {
+          console.log(`  - ${s.name} [${s.state}]`);
         }
         console.log();
         break;
+      }
 
-      case 'tasks':
+      case 'tasks': {
         const queue = this.daemon.getTaskQueue();
-        const stats = queue.getStats();
+        const taskStats = queue.getStats();
         console.log('\n📋 任务队列:');
-        console.log('  总计:', stats.total);
-        console.log('  运行中:', stats.active);
-        console.log('  待处理:', stats.pending);
-        console.log('  已完成:', stats.completed);
-        console.log('  失败:', stats.failed);
+        console.log('  总计:', taskStats.total);
+        console.log('  运行中:', taskStats.active);
+        console.log('  待处理:', taskStats.pending);
+        console.log('  已完成:', taskStats.completed);
+        console.log('  失败:', taskStats.failed);
         console.log();
         break;
+      }
 
-      case 'memory':
+      case 'memory': {
         const memory = this.daemon.getMemory();
         const memStats = memory.getStats();
         console.log('\n🧠 记忆统计:');
@@ -177,13 +179,15 @@ export class PersistentDaemon {
         console.log('  未命中:', memStats.misses);
         console.log();
         break;
+      }
 
-      case 'create':
-        const session = await this.daemon.createSession({
-          name: args.join(' ') || `session-${Date.now()}`
+      case 'create': {
+        const newSession = await this.daemon.createSession({
+          name: args.join(' ') || `session-${Date.now()}`,
         });
-        console.log('✅ 会话已创建:', session.id);
+        console.log('✅ 会话已创建:', newSession.id);
         break;
+      }
 
       case 'stop':
         await this.stop();

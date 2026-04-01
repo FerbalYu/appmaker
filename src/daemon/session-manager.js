@@ -12,13 +12,13 @@ export const SESSION_STATE = {
   IDLE: 'idle',
   SUSPENDED: 'suspended',
   TERMINATED: 'terminated',
-  WAITING: 'waiting'
+  WAITING: 'waiting',
 };
 
 export const AGENT_MODE = {
   FOREGROUND: 'foreground',
   BACKGROUND: 'background',
-  DAEMON: 'daemon'
+  DAEMON: 'daemon',
 };
 
 export class SessionManager extends EventEmitter {
@@ -31,7 +31,7 @@ export class SessionManager extends EventEmitter {
       maxIdleTime: config.maxIdleTime || 30 * 60 * 1000,
       maxConcurrentSessions: config.maxConcurrentSessions || 10,
       autoCleanup: config.autoCleanup !== false,
-      ...config
+      ...config,
     };
 
     this.sessions = new Map();
@@ -39,17 +39,17 @@ export class SessionManager extends EventEmitter {
     this.sessionTimers = new Map();
 
     this.logger = this.config.logger || {
-      info: () => { },
-      debug: () => { },
-      warn: () => { },
-      error: () => { }
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
     };
 
     this.stats = {
       totalCreated: 0,
       totalClosed: 0,
       totalMessages: 0,
-      activeCount: 0
+      activeCount: 0,
     };
 
     if (this.config.autoCleanup) {
@@ -78,13 +78,13 @@ export class SessionManager extends EventEmitter {
         env: { ...process.env },
         history: [],
         variables: {},
-        metadata: config.metadata || {}
+        metadata: config.metadata || {},
       },
 
       agent: {
         type: config.agentType || 'generic',
         config: config.agentConfig || {},
-        state: null
+        state: null,
       },
 
       timing: {
@@ -92,20 +92,20 @@ export class SessionManager extends EventEmitter {
         lastActivity: now,
         lastMessage: now,
         totalDuration: 0,
-        idleTime: 0
+        idleTime: 0,
       },
 
       stats: {
         messageCount: 0,
         taskCount: 0,
-        errorCount: 0
+        errorCount: 0,
       },
 
       settings: {
         autoSave: config.autoSave !== false,
         persistent: config.persistent !== false,
-        priority: config.priority || 1
-      }
+        priority: config.priority || 1,
+      },
     };
 
     this.sessions.set(sessionId, session);
@@ -135,7 +135,7 @@ export class SessionManager extends EventEmitter {
       type: options.type || 'user',
       content: message,
       timestamp: now,
-      metadata: options.metadata || {}
+      metadata: options.metadata || {},
     };
 
     session.context.history.push(msg);
@@ -147,7 +147,7 @@ export class SessionManager extends EventEmitter {
     if (options.context) {
       session.context.variables = {
         ...session.context.variables,
-        ...options.context
+        ...options.context,
       };
     }
 
@@ -166,15 +166,15 @@ export class SessionManager extends EventEmitter {
     let history = [...session.context.history];
 
     if (options.since) {
-      history = history.filter(m => m.timestamp >= options.since);
+      history = history.filter((m) => m.timestamp >= options.since);
     }
 
     if (options.until) {
-      history = history.filter(m => m.timestamp <= options.until);
+      history = history.filter((m) => m.timestamp <= options.until);
     }
 
     if (options.type) {
-      history = history.filter(m => m.type === options.type);
+      history = history.filter((m) => m.type === options.type);
     }
 
     if (options.limit) {
@@ -195,8 +195,8 @@ export class SessionManager extends EventEmitter {
       ...updates,
       variables: {
         ...session.context.variables,
-        ...(updates.variables || {})
-      }
+        ...(updates.variables || {}),
+      },
     };
 
     session.timing.lastActivity = Date.now();
@@ -265,15 +265,19 @@ export class SessionManager extends EventEmitter {
     this.stats.activeCount = this.sessions.size;
 
     if (this.config.store && session.settings.persistent) {
-      await this.config.store.store('procedural', {
-        sessionId,
-        summary: await this._generateSessionSummary(session),
-        duration: session.timing.totalDuration,
-        stats: session.stats
-      }, {
-        tags: ['session', 'closed', reason],
-        priority: 1
-      });
+      await this.config.store.store(
+        'procedural',
+        {
+          sessionId,
+          summary: await this._generateSessionSummary(session),
+          duration: session.timing.totalDuration,
+          stats: session.stats,
+        },
+        {
+          tags: ['session', 'closed', reason],
+          priority: 1,
+        },
+      );
     }
 
     this.logger.info(`Session closed: ${sessionId} (${reason})`);
@@ -292,7 +296,7 @@ export class SessionManager extends EventEmitter {
       taskCount: session.stats.taskCount,
       errorCount: session.stats.errorCount,
       lastVariables: session.context.variables,
-      tags: session.context.metadata.tags || []
+      tags: session.context.metadata.tags || [],
     };
   }
 
@@ -304,15 +308,15 @@ export class SessionManager extends EventEmitter {
     let sessions = Array.from(this.sessions.values());
 
     if (options.state) {
-      sessions = sessions.filter(s => s.state === options.state);
+      sessions = sessions.filter((s) => s.state === options.state);
     }
 
     if (options.mode) {
-      sessions = sessions.filter(s => s.mode === options.mode);
+      sessions = sessions.filter((s) => s.mode === options.mode);
     }
 
     if (options.minPriority !== undefined) {
-      sessions = sessions.filter(s => s.settings.priority >= options.minPriority);
+      sessions = sessions.filter((s) => s.settings.priority >= options.minPriority);
     }
 
     if (options.sortBy) {
@@ -402,7 +406,9 @@ export class SessionManager extends EventEmitter {
         try {
           global.gc();
           this.logger.debug(`Cleaned up ${cleaned} sessions and executed GC.`);
-        } catch (e) { }
+        } catch (e) {
+          /* ignore GC errors */
+        }
       }
     }, this.config.sessionTimeout / 2);
 
@@ -420,8 +426,8 @@ export class SessionManager extends EventEmitter {
       byState: {
         active: this.list({ state: SESSION_STATE.ACTIVE }).length,
         idle: this.list({ state: SESSION_STATE.IDLE }).length,
-        suspended: this.list({ state: SESSION_STATE.SUSPENDED }).length
-      }
+        suspended: this.list({ state: SESSION_STATE.SUSPENDED }).length,
+      },
     };
   }
 
@@ -433,7 +439,7 @@ export class SessionManager extends EventEmitter {
     return crypto.randomBytes(8).toString('hex');
   }
 
-  close() {
+  shutdown() {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
     }
@@ -453,7 +459,7 @@ export class BackgroundAgent {
     this.config = {
       pollingInterval: config.pollingInterval || 5000,
       maxRetries: config.maxRetries || 3,
-      ...config
+      ...config,
     };
 
     this.state = 'init';

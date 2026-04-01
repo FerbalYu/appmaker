@@ -13,12 +13,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const MINIMAX_MCP_CONFIG = {
   name: 'minimax-mcp',
   type: 'api',
-  capabilities: [
-    'complex-reasoning',
-    'web-search',
-    'image-understanding',
-    'architecture-design'
-  ]
+  capabilities: ['complex-reasoning', 'web-search', 'image-understanding', 'architecture-design'],
 };
 
 const SYSTEM_PROMPT = `你是一个资深的软件架构师。请深入分析以下项目需求，你可以使用工具通过网络搜集更多资料（比如遇到不熟悉的框架、最新技术栈时），然后再严格输出一个 JSON 格式的任务分解计划。
@@ -52,7 +47,8 @@ export class MinimaxMCPAdapter extends AgentAdapter {
     this.apiHost = process.env.MINIMAX_API_HOST || config.api_host || 'https://api.minimaxi.com';
     this.model = process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-M2.7';
     this.mcpCommand = process.env.MINIMAX_MCP_COMMAND || config.mcp_command || 'uvx';
-    this.mcpArgs = process.env.MINIMAX_MCP_ARGS || config.mcp_args || ['minimax-coding-plan-mcp', '-y'];
+    this.mcpArgs = process.env.MINIMAX_MCP_ARGS ||
+      config.mcp_args || ['minimax-coding-plan-mcp', '-y'];
   }
 
   async healthCheck() {
@@ -61,15 +57,15 @@ export class MinimaxMCPAdapter extends AgentAdapter {
       const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           model: this.model,
           messages: [{ role: 'user', content: 'hello' }],
-          max_completion_tokens: 10
+          max_completion_tokens: 10,
         }),
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(10000),
       });
       return res.ok;
     } catch {
@@ -87,9 +83,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         throw new Error('MINIMAX_API_KEY environment variable is missing.');
       }
 
-      const mcpArgs = Array.isArray(this.mcpArgs)
-        ? this.mcpArgs
-        : this.mcpArgs.split(',');
+      const mcpArgs = Array.isArray(this.mcpArgs) ? this.mcpArgs : this.mcpArgs.split(',');
 
       console.log(`[${this.name}] 初始化 MCP 客户端: ${this.mcpCommand} ${mcpArgs.join(' ')}`);
       transport = new StdioClientTransport({
@@ -98,31 +92,31 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         env: {
           ...process.env,
           MINIMAX_API_KEY: this.apiKey,
-          MINIMAX_API_HOST: this.apiHost
-        }
+          MINIMAX_API_HOST: this.apiHost,
+        },
       });
 
       mcpClient = new Client(
         { name: 'appmaker-minimax-planner', version: '1.0.0' },
-        { capabilities: {} }
+        { capabilities: {} },
       );
 
       await mcpClient.connect(transport);
       console.log(`[${this.name}] MCP 服务已连接，获取工具列表...`);
 
       const toolsMetadata = await mcpClient.listTools();
-      const tools = toolsMetadata.tools.map(t => ({
+      const tools = toolsMetadata.tools.map((t) => ({
         type: 'function',
         function: {
           name: t.name,
           description: t.description,
-          parameters: t.inputSchema || { type: 'object', properties: {} }
-        }
+          parameters: t.inputSchema || { type: 'object', properties: {} },
+        },
       }));
 
       let messages = [
         { role: 'system', name: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', name: 'user', content: task.description }
+        { role: 'user', name: 'user', content: task.description },
       ];
 
       let finalOutput = '';
@@ -132,9 +126,9 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         const payload = {
           model: this.model,
           messages,
-          ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {})
+          ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
         };
-        
+
         if (this.apiHost.includes('minimaxi.com')) {
           payload.extra_body = { reasoning_split: true };
         }
@@ -142,11 +136,11 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(600000)
+          signal: AbortSignal.timeout(600000),
         });
 
         if (!res.ok) {
@@ -155,41 +149,46 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         }
 
         const data = await res.json();
-        
+
         if (data.base_resp && data.base_resp.status_code !== 0) {
-          throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+          throw new Error(
+            `MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`,
+          );
         } else if (data.error) {
           throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
         }
 
         if (!data?.choices || data.choices.length === 0) {
-          console.warn(`[${this.name}] API 返回数据缺少 choices 字段，原始响应:`, JSON.stringify(data).substring(0, 500));
+          console.warn(
+            `[${this.name}] API 返回数据缺少 choices 字段，原始响应:`,
+            JSON.stringify(data).substring(0, 500),
+          );
           break;
         }
-        
+
         const choice = data.choices[0];
-        
+
         if (!choice?.message) {
           console.warn(`[${this.name}] choice 缺少 message 字段`);
           break;
         }
-        
+
         const message = choice.message;
 
         // Emit Contextual Reasoning
         if (message.reasoning_details && message.reasoning_details.length > 0) {
-          const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+          const reasoningText = message.reasoning_details.map((r) => r.text).join('\n');
           if (typeof this.emit === 'function') {
             this.emit('action', { type: 'think', content: reasoningText.trim() });
           }
         } else {
-          const contentStr = message.content || "";
+          const contentStr = message.content || '';
           const thinkMatch = contentStr.match(/<think>([\s\S]*?)<\/think>/i);
           if (thinkMatch && typeof this.emit === 'function') {
-             this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+            this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
           }
         }
-        
+
         messages.push(message);
 
         if (message.tool_calls?.length > 0) {
@@ -199,7 +198,10 @@ export class MinimaxMCPAdapter extends AgentAdapter {
             const args = JSON.parse(toolCall.function.arguments);
             let toolResult;
             try {
-              toolResult = await mcpClient.callTool({ name: toolCall.function.name, arguments: args });
+              toolResult = await mcpClient.callTool({
+                name: toolCall.function.name,
+                arguments: args,
+              });
             } catch (err) {
               toolResult = { content: [{ type: 'text', text: `Error: ${err.message}` }] };
             }
@@ -212,7 +214,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
               role: 'tool',
               name: toolCall.function.name,
               tool_call_id: toolCall.id,
-              content: textOutput
+              content: textOutput,
             });
           }
         } else {
@@ -227,22 +229,32 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
       const contentStr = this._extractJSON(finalOutput);
 
-      return this._formatResult({
-        task_id: task.id,
-        success: true,
-        output: contentStr,
-        duration_ms: Date.now() - startTime
-      }, startTime);
-
+      return this._formatResult(
+        {
+          task_id: task.id,
+          success: true,
+          output: contentStr,
+          duration_ms: Date.now() - startTime,
+        },
+        startTime,
+      );
     } catch (error) {
       console.error(`[${this.name}] 执行失败: `, error.message);
       return this.handleError(error);
     } finally {
       if (mcpClient) {
-        try { await mcpClient.close(); } catch { /* ignore */ }
+        try {
+          await mcpClient.close();
+        } catch {
+          /* ignore */
+        }
       }
       if (transport) {
-        try { await transport.close(); } catch { /* ignore */ }
+        try {
+          await transport.close();
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -275,23 +287,25 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         return this._repairIfNeeded(candidate);
       }
     }
-    
+
     try {
       if (this._isValidJSON(output)) {
-         return this._repairIfNeeded(output);
+        return this._repairIfNeeded(output);
       }
-    } catch {}
+    } catch (_) {
+      /* ignore validation errors */
+    }
 
     return null;
   }
-  
+
   _repairIfNeeded(str) {
-      try {
-          JSON.parse(str);
-          return str;
-      } catch {
-          return jsonrepair(str);
-      }
+    try {
+      JSON.parse(str);
+      return str;
+    } catch {
+      return jsonrepair(str);
+    }
   }
 
   _isValidJSON(str) {
@@ -303,10 +317,10 @@ export class MinimaxMCPAdapter extends AgentAdapter {
       return true;
     } catch {
       try {
-         JSON.parse(jsonrepair(trimmed));
-         return true;
+        JSON.parse(jsonrepair(trimmed));
+        return true;
       } catch {
-         return false;
+        return false;
       }
     }
   }
@@ -317,17 +331,19 @@ export class MinimaxMCPAdapter extends AgentAdapter {
       task_id: rawResult.task_id || 'unknown',
       agent: this.name,
       status: output ? 'success' : 'failed',
-      output: output ? {
-        files_created: [],
-        files_modified: [],
-        tests_run: false,
-        summary: output
-      } : null,
+      output: output
+        ? {
+            files_created: [],
+            files_modified: [],
+            tests_run: false,
+            summary: output,
+          }
+        : null,
       metrics: {
-        duration_ms: rawResult.duration_ms || (Date.now() - startTime),
-        tokens_used: 0
+        duration_ms: rawResult.duration_ms || Date.now() - startTime,
+        tokens_used: 0,
       },
-      errors: output ? [] : ['Failed to extract valid JSON from AI response']
+      errors: output ? [] : ['Failed to extract valid JSON from AI response'],
     };
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Agent Dispatcher - 智能任务调度器
- * 
+ *
  * 核心能力：
  * - 基于任务类型的智能 Agent 选择
  * - 并发控制与负载均衡
@@ -34,7 +34,7 @@ export const TASK_TYPE_MAPPING = {
   review: 'native-reviewer',
   test: 'native-reviewer',
   docs: 'native-reviewer',
-  document: 'native-reviewer'
+  document: 'native-reviewer',
 };
 
 export class AgentDispatcher {
@@ -47,23 +47,23 @@ export class AgentDispatcher {
       max_retries: 2,
       retry_delay: 1000,
       enable_queue: true,
-      ...config
+      ...config,
     };
-    
+
     this.activeTasks = 0;
     this.taskQueue = [];
     this.taskMetrics = new Map();
-    
+
     this.permissionClassifier = new PermissionClassifier({
       auto_allow_low_risk: config.auto_allow_low_risk !== false,
       auto_deny_critical: config.auto_deny_critical !== false,
       enable_ai_delegation: config.enable_ai_delegation !== false,
-      history_file: config.permission_history_file
+      history_file: config.permission_history_file,
     });
-    
+
     this.toolbox = new UniversalToolbox({
       workspace_root: config.workspace_root || process.cwd(),
-      timeout: config.tool_timeout || 30000
+      timeout: config.tool_timeout || 30000,
     });
   }
 
@@ -80,7 +80,7 @@ export class AgentDispatcher {
       successTasks: 0,
       failedTasks: 0,
       totalTokens: 0,
-      avgDuration: 0
+      avgDuration: 0,
     });
   }
 
@@ -123,24 +123,28 @@ export class AgentDispatcher {
         agentInstance.execute(enrichedTask),
         this.config.request_timeout,
         agentType,
-        task.id
+        task.id,
       );
 
       const duration = Date.now() - startTime;
       this._updateAgentMetrics(agentType, 'success', 0, duration);
-      
+
       return {
         ...result,
         selected_agent: agentType,
-        execution_time: duration
+        execution_time: duration,
       };
     } catch (error) {
       const duration = Date.now() - startTime;
       this._updateAgentMetrics(agentType, 'failed', 0, duration);
-      
+
       throw this._normalizeError(error, agentType, task.id);
     } finally {
-      if (agentInstance && typeof agentInstance.cleanup === 'function' && agentInstance !== this.agents.get(agentType)) {
+      if (
+        agentInstance &&
+        typeof agentInstance.cleanup === 'function' &&
+        agentInstance !== this.agents.get(agentType)
+      ) {
         await agentInstance.cleanup();
       }
       this.activeTasks--;
@@ -164,15 +168,19 @@ export class AgentDispatcher {
    */
   _normalizeError(error, agentType, taskId) {
     const errorMsg = error?.message || String(error);
-    
+
     if (errorMsg.includes('timeout')) {
-      return new Error(`[${agentType}] Task ${taskId} timed out after ${this.config.request_timeout / 1000}s`);
+      return new Error(
+        `[${agentType}] Task ${taskId} timed out after ${this.config.request_timeout / 1000}s`,
+      );
     }
-    
+
     if (errorMsg.includes('rate limit') || errorMsg.includes('429')) {
-      return new Error(`[${agentType}] Rate limit exceeded for task ${taskId}. Please retry later.`);
+      return new Error(
+        `[${agentType}] Rate limit exceeded for task ${taskId}. Please retry later.`,
+      );
     }
-    
+
     return new Error(`[${agentType}] Task ${taskId} failed: ${errorMsg}`);
   }
 
@@ -183,17 +191,21 @@ export class AgentDispatcher {
   async _dispatchParallel(task) {
     const factory = this.agentFactories.get('native-coder');
     const tasks = task.tasks || [];
-    
-    const promises = tasks.map(t => {
+
+    const promises = tasks.map((t) => {
       const enrichedTask = this._enrichTask(t, 'native-coder');
       const agentInstance = factory();
       return this._executeWithTimeout(
         agentInstance.execute(enrichedTask),
         this.config.request_timeout,
         'native-coder',
-        t.id
+        t.id,
       ).finally(async () => {
-        if (agentInstance && typeof agentInstance.cleanup === 'function' && agentInstance !== this.agents.get('native-coder')) {
+        if (
+          agentInstance &&
+          typeof agentInstance.cleanup === 'function' &&
+          agentInstance !== this.agents.get('native-coder')
+        ) {
           await agentInstance.cleanup();
         }
       });
@@ -205,8 +217,10 @@ export class AgentDispatcher {
       status: 'parallel',
       results: results.map((r, i) => ({
         task_id: tasks[i].id,
-        ...(r.status === 'fulfilled' ? r.value : { status: 'failed', error: r.reason?.message || r.reason })
-      }))
+        ...(r.status === 'fulfilled'
+          ? r.value
+          : { status: 'failed', error: r.reason?.message || r.reason }),
+      })),
     };
   }
 
@@ -224,14 +238,30 @@ export class AgentDispatcher {
     const desc = (description || '').toLowerCase();
 
     const reviewKeywords = ['review', '评审', '检查', '批评', 'critique', '评分', '代码审查'];
-    if (reviewKeywords.some(k => desc.includes(k))) return 'native-reviewer';
+    if (reviewKeywords.some((k) => desc.includes(k))) return 'native-reviewer';
 
     const codeKeywords = [
-      'implement', '实现', 'create', '创建', 'write', '写',
-      'fix', '修复', 'bug', 'add', '删除', '修改', '编写',
-      '功能', 'feature', 'module', '模块', '开发', 'dev'
+      'implement',
+      '实现',
+      'create',
+      '创建',
+      'write',
+      '写',
+      'fix',
+      '修复',
+      'bug',
+      'add',
+      '删除',
+      '修改',
+      '编写',
+      '功能',
+      'feature',
+      'module',
+      '模块',
+      '开发',
+      'dev',
     ];
-    if (codeKeywords.some(k => desc.includes(k))) return 'native-coder';
+    if (codeKeywords.some((k) => desc.includes(k))) return 'native-coder';
 
     return 'native-coder';
   }
@@ -245,8 +275,8 @@ export class AgentDispatcher {
         ...task.context,
         agent_id: task.id,
         dispatcher: 'agent-dispatcher',
-        checkpoint: task.checkpoint || this.config.checkpoint
-      }
+        checkpoint: task.checkpoint || this.config.checkpoint,
+      },
     };
   }
 
@@ -257,13 +287,13 @@ export class AgentDispatcher {
   }
 
   _delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   _processQueue() {
     if (this.config.enable_queue && this.taskQueue.length > 0) {
       const nextTask = this.taskQueue.shift();
-      this.dispatch(nextTask).catch(err => {
+      this.dispatch(nextTask).catch((err) => {
         console.error(`Queue task ${nextTask.id} failed:`, err.message);
       });
     }
@@ -278,11 +308,12 @@ export class AgentDispatcher {
     if (!metrics) return;
 
     metrics.totalTasks++;
-    
+
     if (event === 'success') {
       metrics.successTasks++;
       metrics.totalTokens += tokens;
-      metrics.avgDuration = (metrics.avgDuration * (metrics.successTasks - 1) + duration) / metrics.successTasks;
+      metrics.avgDuration =
+        (metrics.avgDuration * (metrics.successTasks - 1) + duration) / metrics.successTasks;
     } else if (event === 'failed') {
       metrics.failedTasks++;
     }
@@ -294,7 +325,9 @@ export class AgentDispatcher {
       try {
         const health = await Promise.race([
           agent.healthCheck(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 5000))
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Health check timeout')), 5000),
+          ),
         ]);
         results[name] = { status: 'healthy', ...health };
       } catch (error) {
@@ -311,7 +344,7 @@ export class AgentDispatcher {
         ...agent.getInfo(),
         metrics: this.taskMetrics.get(name),
         active_tasks: this.activeTasks,
-        queue_length: this.taskQueue.length
+        queue_length: this.taskQueue.length,
       };
     }
     return info;
@@ -322,13 +355,16 @@ export class AgentDispatcher {
     for (const [name, data] of this.taskMetrics) {
       metrics[name] = {
         ...data,
-        success_rate: data.totalTasks > 0 ? (data.successTasks / data.totalTasks * 100).toFixed(2) + '%' : '0%'
+        success_rate:
+          data.totalTasks > 0
+            ? ((data.successTasks / data.totalTasks) * 100).toFixed(2) + '%'
+            : '0%',
       };
     }
     return {
       activeTasks: this.activeTasks,
       queueLength: this.taskQueue.length,
-      agents: metrics
+      agents: metrics,
     };
   }
 
@@ -373,7 +409,7 @@ export class AgentDispatcher {
         tool: toolName,
         denied: true,
         reason: 'Risk level too high, auto denied',
-        risk_level: classification.risk_level
+        risk_level: classification.risk_level,
       };
     }
 
@@ -383,7 +419,7 @@ export class AgentDispatcher {
         tool: toolName,
         needs_confirmation: true,
         reason: 'Medium risk, requires confirmation',
-        risk_level: classification.risk_level
+        risk_level: classification.risk_level,
       };
     }
 
@@ -416,7 +452,7 @@ export class AgentDispatcher {
       tool_count: this.toolbox.tools.size,
       lsp_clients: this.toolbox.lspClients.size,
       subagents: this.toolbox.subagents.size,
-      bash_processes: this.toolbox.bashProcesses.size
+      bash_processes: this.toolbox.bashProcesses.size,
     };
   }
 
@@ -446,11 +482,11 @@ export class AgentDispatcher {
         await agent.shutdown();
       }
     }
-    
+
     if (this.toolbox) {
       await this.toolbox.cleanup();
     }
-    
+
     this.taskQueue = [];
   }
 }

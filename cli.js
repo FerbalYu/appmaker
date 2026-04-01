@@ -61,10 +61,12 @@ if (daemonIndex !== -1) {
   args.splice(daemonIndex, 1);
 }
 
-const mockIndex = args.findIndex(arg => arg === '--mock' || arg === '--dry-run');
+const mockIndex = args.findIndex((arg) => arg === '--mock' || arg === '--dry-run');
 if (mockIndex !== -1) {
   process.env.APPMAKER_MOCK = '1';
-  console.log('\x1b[33m🚀 警告: 已启用 MOCK/DRY-RUN 模式，所有写操作和命令执行将被沙箱模拟。\x1b[0m');
+  console.log(
+    '\x1b[33m🚀 警告: 已启用 MOCK/DRY-RUN 模式，所有写操作和命令执行将被沙箱模拟。\x1b[0m',
+  );
   args.splice(mockIndex, 1);
 }
 
@@ -107,14 +109,14 @@ async function main() {
         dataDir: daemonDataDir,
         heartbeatInterval: 30000,
         autoSaveInterval: 60000,
-        recoveryEnabled: true
+        recoveryEnabled: true,
       });
 
       globalDaemon.on('heartbeat', (health) => {
         if (process.env.DEBUG) {
           console.log(`💓 心跳 [${new Date().toLocaleTimeString()}]`, {
             state: health.state,
-            memory: Math.round(health.memory.heapUsed / 1024 / 1024) + 'MB'
+            memory: Math.round(health.memory.heapUsed / 1024 / 1024) + 'MB',
           });
         }
       });
@@ -202,7 +204,6 @@ async function main() {
     }
 
     process.exit(0);
-
   } catch (error) {
     if (globalDaemon) {
       try {
@@ -252,7 +253,6 @@ async function cmdDaemonStatus() {
       }
       console.log();
     }
-
   } catch (error) {
     if (error.code === 'ENOENT') {
       console.log('守护进程未运行或数据目录不存在');
@@ -273,7 +273,7 @@ async function cmdHealth() {
     console.log(`  ${color}${icon}\x1b[0m ${agent}`);
   }
 
-  const allReady = Object.values(status).every(v => v);
+  const allReady = Object.values(status).every((v) => v);
   console.log();
   if (allReady) {
     console.log('\x1b[32m所有 Agent 就绪\x1b[0m');
@@ -290,13 +290,17 @@ async function cmdPlan(requirement) {
   }
 
   if (globalDaemon) {
-    await globalDaemon.getMemory().store('semantic', {
-      type: 'plan_request',
-      requirement,
-      timestamp: Date.now()
-    }, {
-      tags: ['planning', 'intent']
-    });
+    await globalDaemon.getMemory().store(
+      'semantic',
+      {
+        type: 'plan_request',
+        requirement,
+        timestamp: Date.now(),
+      },
+      {
+        tags: ['planning', 'intent'],
+      },
+    );
   }
 
   try {
@@ -376,7 +380,7 @@ async function cmdExecute(input) {
 
 async function cmdRun(requirement) {
   const autoYes = args.includes('--yes') || args.includes('-y');
-  const actualArgs = args.filter(a => !a.startsWith('--yes') && a !== '-y');
+  const actualArgs = args.filter((a) => !a.startsWith('--yes') && a !== '-y');
   requirement = actualArgs.slice(1).join(' ');
 
   if (!requirement) {
@@ -403,15 +407,19 @@ async function cmdRun(requirement) {
     globalBus.emit('plan:ready', { plan });
 
     if (globalDaemon) {
-      await globalDaemon.getMemory().store('semantic', {
-        type: 'execution_plan',
-        project: plan.project,
-        taskCount: plan.tasks.length,
-        milestoneCount: plan.milestones.length,
-        filename
-      }, {
-        tags: ['planning', 'execution', plan.project.name]
-      });
+      await globalDaemon.getMemory().store(
+        'semantic',
+        {
+          type: 'execution_plan',
+          project: plan.project,
+          taskCount: plan.tasks.length,
+          milestoneCount: plan.milestones.length,
+          filename,
+        },
+        {
+          tags: ['planning', 'execution', plan.project.name],
+        },
+      );
     }
   } catch (error) {
     console.error('\x1b[31mPlan generation failed:\x1b[0m', error.message);
@@ -430,7 +438,7 @@ async function cmdRun(requirement) {
   let confirmed = autoYes;
   if (!autoYes) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await new Promise(resolve => rl.question('确认执行? (y/n): ', resolve));
+    const answer = await new Promise((resolve) => rl.question('确认执行? (y/n): ', resolve));
     rl.close();
     confirmed = answer.toLowerCase() === 'y';
   }
@@ -463,68 +471,90 @@ async function executePlan(plan) {
       mode: 'foreground',
       metadata: {
         project: plan.project.name,
-        plan: plan.project
-      }
+        plan: plan.project,
+      },
     });
 
-    await globalDaemon.getMemory().store('episodic', {
-      type: 'execution_start',
-      project: plan.project.name,
-      sessionId: session.id,
-      taskCount: plan.tasks.length
-    }, {
-      tags: ['execution', plan.project.name, 'start']
-    });
+    await globalDaemon.getMemory().store(
+      'episodic',
+      {
+        type: 'execution_start',
+        project: plan.project.name,
+        sessionId: session.id,
+        taskCount: plan.tasks.length,
+      },
+      {
+        tags: ['execution', plan.project.name, 'start'],
+      },
+    );
   }
 
   console.log('开始执行计划...\n');
   console.log('检查 Agent...\n');
   const status = await healthCheck();
-  const allReady = Object.values(status).every(v => v);
+  const allReady = Object.values(status).every((v) => v);
   if (!allReady) {
     console.log('\x1b[33m警告: 部分 Agent 不可用，继续执行...\x1b[0m\n');
   }
 
   const engine = createEngine({
     project_root: executeDir,
-    max_review_cycles: 3
+    max_review_cycles: 3,
   });
 
   if (globalDaemon) {
     engine.on('task:complete', async (task) => {
-      await globalDaemon.getMemory().store('episodic', {
-        type: 'task_complete',
-        taskId: task.id,
-        taskName: task.name,
-        project: plan.project.name
-      }, {
-        tags: ['task', 'complete', plan.project.name],
-        priority: 1
-      });
+      await globalDaemon.getMemory().store(
+        'episodic',
+        {
+          type: 'task_complete',
+          taskId: task.id,
+          taskName: task.name,
+          project: plan.project.name,
+        },
+        {
+          tags: ['task', 'complete', plan.project.name],
+          priority: 1,
+        },
+      );
     });
 
     engine.on('task:failed', async (task) => {
-      await globalDaemon.getMemory().store('episodic', {
-        type: 'task_failed',
-        taskId: task.id,
-        taskName: task.name,
-        error: task.error,
-        project: plan.project.name
-      }, {
-        tags: ['task', 'failed', plan.project.name],
-        priority: 2
-      });
+      await globalDaemon.getMemory().store(
+        'episodic',
+        {
+          type: 'task_failed',
+          taskId: task.id,
+          taskName: task.name,
+          error: task.error,
+          project: plan.project.name,
+        },
+        {
+          tags: ['task', 'failed', plan.project.name],
+          priority: 2,
+        },
+      );
     });
   }
 
   const supervisor = new Supervisor(engine, {
-    logger: { logDir: path.join(executeDir, '.appmaker', 'logs') }
+    logger: { logDir: path.join(executeDir, '.appmaker', 'logs') },
   });
 
   await startMonitor();
 
-  const forwardEvents = ['milestone:start', 'milestone:done', 'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'task:retry_wait', 'agent:action'];
-  forwardEvents.forEach(e => engine.on(e, data => globalBus.emit(e, data)));
+  const forwardEvents = [
+    'milestone:start',
+    'milestone:done',
+    'task:start',
+    'task:done',
+    'task:error',
+    'task:review',
+    'task:progress',
+    'task:retry_wait',
+    'agent:action',
+  ];
+  forwardEvents.forEach((e) => engine.on(e, (data) => globalBus.emit(e, data)));
 
   console.log('='.repeat(50));
   console.log(`开始执行: ${plan.project.name}`);
@@ -550,19 +580,23 @@ async function executePlan(plan) {
   console.log(`耗时: ${duration}s`);
 
   if (globalDaemon) {
-    await globalDaemon.getMemory().store('episodic', {
-      type: 'execution_complete',
-      project: plan.project.name,
-      status: result.status,
-      summary: result.summary,
-      duration,
-      timestamp: Date.now()
-    }, {
-      tags: ['execution', plan.project.name, 'complete'],
-      priority: 2
-    });
+    await globalDaemon.getMemory().store(
+      'episodic',
+      {
+        type: 'execution_complete',
+        project: plan.project.name,
+        status: result.status,
+        summary: result.summary,
+        duration,
+        timestamp: Date.now(),
+      },
+      {
+        tags: ['execution', plan.project.name, 'complete'],
+        priority: 2,
+      },
+    );
   }
-  
+
   globalBus.emit('execution:done', { result, duration });
 
   if (result.summary.needs_human > 0) {
@@ -621,11 +655,11 @@ function showHelp() {
 
 async function cmdStatus() {
   console.log('\n📊 执行状态概览:\n');
-  
+
   try {
     const stateFile = path.join(daemonDataDir, 'state.json');
     const state = JSON.parse(await fs.readFile(stateFile, 'utf-8'));
-    
+
     console.log('守护进程状态:');
     console.log('  状态:', state.state);
     console.log('  PID:', state.pid);
@@ -643,18 +677,16 @@ async function cmdStatus() {
 
   const appMakerDir = path.join(executeDir, '.appmaker');
   const checkpointsDir = path.join(appMakerDir, 'checkpoints');
-  
+
   try {
     const checkpoints = await fs.readdir(checkpointsDir);
     const latestCp = checkpoints
-      .filter(f => f.endsWith('.json'))
+      .filter((f) => f.endsWith('.json'))
       .sort()
       .pop();
-    
+
     if (latestCp) {
-      const cpData = JSON.parse(
-        await fs.readFile(path.join(checkpointsDir, latestCp), 'utf-8')
-      );
+      const cpData = JSON.parse(await fs.readFile(path.join(checkpointsDir, latestCp), 'utf-8'));
       console.log('最新检查点:');
       console.log('  ID:', cpData.id);
       console.log('  名称:', cpData.name);
@@ -687,17 +719,17 @@ async function cmdStatus() {
       }
     }
   }
-  
+
   console.log();
 }
 
 async function cmdLogs(type = 'execution') {
   const logsDir = path.join(executeDir, '.appmaker', 'logs', type);
-  
+
   try {
     const files = await fs.readdir(logsDir);
-    const logFiles = files.filter(f => f.endsWith('.log') || f.endsWith('.md'));
-    
+    const logFiles = files.filter((f) => f.endsWith('.log') || f.endsWith('.md'));
+
     if (logFiles.length === 0) {
       console.log(`\n没有找到 ${type} 类型的日志\n`);
       return;
@@ -707,12 +739,12 @@ async function cmdLogs(type = 'execution') {
     const latestFiles = logFiles.sort().slice(-3);
 
     console.log(`\n📋 ${type} 日志 (最新 ${latestFiles.length} 个文件，显示最后 ${tail} 行):\n`);
-    
+
     for (const file of latestFiles) {
       const content = await fs.readFile(path.join(logsDir, file), 'utf-8');
-      const lines = content.split('\n').filter(l => l.trim());
+      const lines = content.split('\n').filter((l) => l.trim());
       const tailLines = lines.slice(-tail);
-      
+
       console.log(`--- ${file} ---`);
       console.log(tailLines.join('\n'));
       console.log();
@@ -728,14 +760,14 @@ async function cmdLogs(type = 'execution') {
 
 async function cmdConfig(key, value) {
   console.log('\n⚙️  配置信息:\n');
-  
+
   const defaultConfig = {
-    'max_review_cycles': 3,
-    'task_timeout': 300000,
-    'max_retries': 2,
-    'max_concurrent_tasks': 3,
-    'token_budget': 100000,
-    'heartbeat_interval': 30000
+    max_review_cycles: 3,
+    task_timeout: 300000,
+    max_retries: 2,
+    max_concurrent_tasks: 3,
+    token_budget: 100000,
+    heartbeat_interval: 30000,
   };
 
   if (!key) {
@@ -750,7 +782,7 @@ async function cmdConfig(key, value) {
   }
 
   const configKey = key.toLowerCase();
-  
+
   if (value === undefined) {
     if (defaultConfig[configKey] !== undefined) {
       console.log(`${configKey}: ${defaultConfig[configKey]}`);
@@ -767,13 +799,15 @@ async function cmdConfig(key, value) {
     console.log(`建议值: ${value}`);
     console.log(`\n如需永久修改，请编辑 config/defaults.json`);
   }
-  
+
   console.log();
 }
 
 async function cmdThink() {
   const autoYes = args.includes('--yes') || args.includes('-y');
-  const actualArgs = args.filter(a => !a.startsWith('--yes') && a !== '-y' && a !== '--verbose' && a !== '-v');
+  const actualArgs = args.filter(
+    (a) => !a.startsWith('--yes') && a !== '-y' && a !== '--verbose' && a !== '-v',
+  );
   const question = actualArgs.slice(1).join(' ');
 
   if (!question) {
@@ -783,7 +817,7 @@ async function cmdThink() {
   }
 
   // 强制显示内部讨论轨迹 (CLI 展示时要把内部讨论过程印出来)
-  const verbose = true; 
+  const verbose = true;
 
   console.log('\n' + '='.repeat(50));
   console.log('🤖 进入 4-Agent 多角色思考模式');
@@ -793,12 +827,12 @@ async function cmdThink() {
   try {
     await startMonitor();
     globalBus.emit('think:start', { question });
-    
+
     const thinker = new MultiAgentThinker({ verbose });
-    
+
     const answer = await thinker.think(question, (msg) => {
-       globalBus.emit('think:message', { content: msg });
-       console.log(`\x1b[36m[Thinker]\x1b[0m ${msg}`);
+      globalBus.emit('think:message', { content: msg });
+      console.log(`\x1b[36m[Thinker]\x1b[0m ${msg}`);
     });
 
     globalBus.emit('think:done', { answer });
@@ -808,7 +842,6 @@ async function cmdThink() {
     console.log('='.repeat(50) + '\n');
     console.log(answer);
     console.log('\n' + '='.repeat(50) + '\n');
-
   } catch (err) {
     console.error('\x1b[31m思考过程中发生错误:\x1b[0m', err.message);
     if (process.env.DEBUG) console.error(err.stack);

@@ -6,18 +6,29 @@ export class SelfCorrector {
     this.engine = engine;
     this.logger = new Logger();
     this.apiKey = process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY;
-    this.apiHost = process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST || 'https://api.minimaxi.com';
+    this.apiHost =
+      process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST || 'https://api.minimaxi.com';
     this.model = process.env.OPENAI_MODEL || process.env.MINIMAX_API_MODEL || 'MiniMax-Text-01';
   }
 
   async correct(triggerReason, context) {
-    this.logger.info('corrections', 'corrections.log', `Analyzing root cause for trigger: ${triggerReason}`, { task: context.task?.id });
+    this.logger.info(
+      'corrections',
+      'corrections.log',
+      `Analyzing root cause for trigger: ${triggerReason}`,
+      { task: context.task?.id },
+    );
 
     const rootCause = this._analyzeRootCause(triggerReason, context);
     const strategy = this._selectStrategy(rootCause);
 
     if (strategy.action === 'human_intervention') {
-      this.logger.error('corrections', 'corrections.log', `Correction unresolved, requires human intervention for task: ${context.task?.id}`, { cause: rootCause });
+      this.logger.error(
+        'corrections',
+        'corrections.log',
+        `Correction unresolved, requires human intervention for task: ${context.task?.id}`,
+        { cause: rootCause },
+      );
       return this._createCorrectionResult(false, 'human_intervention', rootCause, null, context);
     }
 
@@ -35,7 +46,7 @@ export class SelfCorrector {
       cause,
       result,
       context,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -50,22 +61,34 @@ export class SelfCorrector {
       details = {
         score: context.score,
         issues: context.issues || [],
-        files: context.files || []
+        files: context.files || [],
       };
     } else if (triggerReason === 'error') {
       const errorStr = String(context.error || '').toLowerCase();
-      if (errorStr.includes('network') || errorStr.includes('timeout') || errorStr.includes('econnrefused')) {
+      if (
+        errorStr.includes('network') ||
+        errorStr.includes('timeout') ||
+        errorStr.includes('econnrefused')
+      ) {
         type = 'network_or_timeout';
         severity = '🟡';
         details = { error: context.error };
       } else if (errorStr.includes('architecture') || errorStr.includes('design')) {
         type = 'architecture_violation';
         severity = '🔴';
-      } else if (errorStr.includes('security') || errorStr.includes('injection') || errorStr.includes('xss')) {
+      } else if (
+        errorStr.includes('security') ||
+        errorStr.includes('injection') ||
+        errorStr.includes('xss')
+      ) {
         type = 'security_vuln';
         severity = '🔴';
         details = { vulnerability_type: this._detectSecurityIssue(errorStr) };
-      } else if (errorStr.includes('token') || errorStr.includes('quota') || errorStr.includes('rate limit')) {
+      } else if (
+        errorStr.includes('token') ||
+        errorStr.includes('quota') ||
+        errorStr.includes('rate limit')
+      ) {
         type = 'resource_exhausted';
         severity = '🔴';
       } else if (errorStr.includes('syntax') || errorStr.includes('parse')) {
@@ -86,10 +109,10 @@ export class SelfCorrector {
 
   _detectSecurityIssue(errorStr) {
     const patterns = {
-      'sql_injection': /sql.*injection/i,
-      'xss': /xss|cross.*site/i,
-      'command_injection': /command.*injection|shell.*injection/i,
-      'path_traversal': /path.*traversal|directory.*traversal/i
+      sql_injection: /sql.*injection/i,
+      xss: /xss|cross.*site/i,
+      command_injection: /command.*injection|shell.*injection/i,
+      path_traversal: /path.*traversal|directory.*traversal/i,
     };
 
     for (const [type, pattern] of Object.entries(patterns)) {
@@ -102,7 +125,11 @@ export class SelfCorrector {
     const NEEDS_HUMAN = ['security_vuln', 'architecture_violation', 'resource_exhausted'];
 
     if (NEEDS_HUMAN.includes(cause.type)) {
-      return { action: 'human_intervention', depth: 'halt', reason: `Issue type '${cause.type}' requires human review` };
+      return {
+        action: 'human_intervention',
+        depth: 'halt',
+        reason: `Issue type '${cause.type}' requires human review`,
+      };
     }
 
     if (cause.type === 'network_or_timeout') {
@@ -132,7 +159,11 @@ export class SelfCorrector {
         return await this._optimizeAndRetry(strategy, context);
 
       default:
-        this.logger.warn('corrections', 'corrections.log', `Unknown correction action: ${strategy.action}`);
+        this.logger.warn(
+          'corrections',
+          'corrections.log',
+          `Unknown correction action: ${strategy.action}`,
+        );
         return { status: 'unknown_action', action: strategy.action };
     }
   }
@@ -142,7 +173,11 @@ export class SelfCorrector {
     const delay_ms = strategy.delay_ms || 1000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      this.logger.info('corrections', 'corrections.log', `Retry attempt ${attempt}/${maxRetries} for task: ${context.task?.id}`);
+      this.logger.info(
+        'corrections',
+        'corrections.log',
+        `Retry attempt ${attempt}/${maxRetries} for task: ${context.task?.id}`,
+      );
 
       await this._sleep(delay_ms * attempt);
 
@@ -160,12 +195,16 @@ export class SelfCorrector {
       return { status: 'fix_skipped', reason: 'no_api_key' };
     }
 
-    this.logger.info('corrections', 'corrections.log', `Dispatching agent fix for task: ${context.task?.id}`);
+    this.logger.info(
+      'corrections',
+      'corrections.log',
+      `Dispatching agent fix for task: ${context.task?.id}`,
+    );
 
     const coder = new NativeCoderAdapter({
       model: this.model,
       api_key: this.apiKey,
-      api_host: this.apiHost
+      api_host: this.apiHost,
     });
 
     const fixPrompt = this._buildFixPrompt(context);
@@ -174,14 +213,14 @@ export class SelfCorrector {
       const result = await coder.execute({
         id: `correction_${context.task?.id || 'unknown'}`,
         description: fixPrompt,
-        context: context.taskContext
+        context: context.taskContext,
       });
 
       return {
         status: 'fix_completed',
         files_created: result.output?.files_created || [],
         files_modified: result.output?.files_modified || [],
-        success: result.status === 'success'
+        success: result.status === 'success',
       };
     } catch (error) {
       this.logger.error('corrections', 'corrections.log', `Agent fix failed: ${error.message}`);
@@ -190,27 +229,31 @@ export class SelfCorrector {
   }
 
   async _optimizeAndRetry(strategy, context) {
-    this.logger.info('corrections', 'corrections.log', `Optimizing and retrying for task: ${context.task?.id}`);
+    this.logger.info(
+      'corrections',
+      'corrections.log',
+      `Optimizing and retrying for task: ${context.task?.id}`,
+    );
 
     const optimizedPrompt = this._buildOptimizedPrompt(context);
 
     const coder = new NativeCoderAdapter({
       model: this.model,
       api_key: this.apiKey,
-      api_host: this.apiHost
+      api_host: this.apiHost,
     });
 
     try {
       const result = await coder.execute({
         id: `optimized_${context.task?.id || 'unknown'}`,
         description: optimizedPrompt,
-        context: context.taskContext
+        context: context.taskContext,
       });
 
       return {
         status: 'optimization_completed',
         files_created: result.output?.files_created || [],
-        success: result.status === 'success'
+        success: result.status === 'success',
       };
     } catch (error) {
       return { status: 'optimization_failed', error: error.message };
@@ -223,12 +266,14 @@ export class SelfCorrector {
     const score = context.score || 0;
 
     const issueList = Array.isArray(issues)
-      ? issues.map((issue, i) => {
-          if (typeof issue === 'string') {
-            return `${i + 1}. [待修复] ${issue}`;
-          }
-          return `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file || 'unknown'}\n   问题: ${issue.reason || issue.message || 'N/A'}\n   建议: ${issue.suggestion || 'N/A'}`;
-        }).join('\n')
+      ? issues
+          .map((issue, i) => {
+            if (typeof issue === 'string') {
+              return `${i + 1}. [待修复] ${issue}`;
+            }
+            return `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file || 'unknown'}\n   问题: ${issue.reason || issue.message || 'N/A'}\n   建议: ${issue.suggestion || 'N/A'}`;
+          })
+          .join('\n')
       : `评分过低 (${score}/100)，需要全面改进代码质量。`;
 
     return `修正以下代码中的问题：
@@ -267,7 +312,11 @@ ${issueList}
   }
 
   async _verify(result, context) {
-    if (result.status === 'retry_scheduled' || result.status === 'fix_completed' || result.status === 'optimization_completed') {
+    if (
+      result.status === 'retry_scheduled' ||
+      result.status === 'fix_completed' ||
+      result.status === 'optimization_completed'
+    ) {
       return true;
     }
     return false;
@@ -279,7 +328,7 @@ ${issueList}
   }
 
   _sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async correctTask(taskId, issues, context = {}) {
@@ -287,7 +336,7 @@ ${issueList}
       task: { id: taskId, ...context },
       issues,
       score: context.score || 50,
-      triggerReason: 'quality_low'
+      triggerReason: 'quality_low',
     };
 
     return await this.correct('quality_low', correctionContext);
@@ -297,7 +346,7 @@ ${issueList}
     const correctionContext = {
       task: { id: taskId, ...context },
       error: error.message || String(error),
-      triggerReason: 'error'
+      triggerReason: 'error',
     };
 
     return await this.correct('error', correctionContext);

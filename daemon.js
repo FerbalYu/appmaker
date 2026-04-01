@@ -91,7 +91,7 @@ async function cmdStart() {
     heartbeatInterval: 30000,
     autoSaveInterval: 60000,
     recoveryEnabled: true,
-    maxRetries: 3
+    maxRetries: 3,
   });
 
   if (interactive) {
@@ -167,7 +167,7 @@ async function cmdStatus() {
 async function cmdRestart() {
   console.log('正在重启守护进程...');
   await cmdStop();
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   await cmdStart();
 }
 

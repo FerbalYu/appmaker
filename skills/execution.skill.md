@@ -5,21 +5,25 @@
 ## 核心特性
 
 ### 🔄 智能重试机制
+
 - 网络错误自动重试（指数退避）
 - 最多重试 2 次
 - 可重试错误：`timeout`, `ECONNRESET`, `rate limit` 等
 
 ### ⏱️ 任务超时控制
+
 - 默认超时：300 秒
 - 防止任务无限等待
 - 超时后自动标记失败
 
 ### 🚀 动态并行调度
+
 - 根据依赖关系智能调度
 - 最大并发数：3（可配置）
 - 自动构建任务依赖图
 
 ### 💰 资源预算管理
+
 - Token 消耗实时追踪
 - 预算超限自动停止
 - 详细的使用报告
@@ -68,10 +72,10 @@ const { createEngine } = require('./agents');
 const engine = createEngine({
   project_root: './project',
   max_review_cycles: 3,
-  task_timeout: 300000,      // 5分钟超时
-  max_retries: 2,            // 重试次数
-  max_concurrent_tasks: 3,   // 最大并发
-  token_budget: 100000       // Token 预算
+  task_timeout: 300000, // 5分钟超时
+  max_retries: 2, // 重试次数
+  max_concurrent_tasks: 3, // 最大并发
+  token_budget: 100000, // Token 预算
 });
 
 const result = await engine.execute(plan);
@@ -79,25 +83,25 @@ const result = await engine.execute(plan);
 
 ## 配置选项
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `max_review_cycles` | 3 | 最大评审修正次数 |
-| `task_timeout` | 300000ms | 任务超时时间 |
-| `max_retries` | 2 | Agent 调用重试次数 |
-| `max_concurrent_tasks` | 3 | 最大并发任务数 |
-| `token_budget` | 100000 | Token 预算上限 |
+| 配置项                 | 默认值   | 说明               |
+| ---------------------- | -------- | ------------------ |
+| `max_review_cycles`    | 3        | 最大评审修正次数   |
+| `task_timeout`         | 300000ms | 任务超时时间       |
+| `max_retries`          | 2        | Agent 调用重试次数 |
+| `max_concurrent_tasks` | 3        | 最大并发任务数     |
+| `token_budget`         | 100000   | Token 预算上限     |
 
 ## 任务状态
 
-| 状态 | 说明 |
-|------|------|
-| `pending` | 等待执行 |
-| `running` | 执行中（编程或评审） |
-| `done` | 完成且通过评审 |
-| `failed` | 执行失败（Agent 错误） |
+| 状态          | 说明                     |
+| ------------- | ------------------------ |
+| `pending`     | 等待执行                 |
+| `running`     | 执行中（编程或评审）     |
+| `done`        | 完成且通过评审           |
+| `failed`      | 执行失败（Agent 错误）   |
 | `needs_human` | 超过修正次数，需人工介入 |
-| `blocked` | 被阻塞（依赖未满足） |
-| `deadlock` | 任务依赖无法满足 |
+| `blocked`     | 被阻塞（依赖未满足）     |
+| `deadlock`    | 任务依赖无法满足         |
 
 ## 修正循环
 
@@ -119,11 +123,12 @@ FAIL → 构建修正 prompt → claude-code 修正
 任务: {task_description}
 
 需修正的问题:
+
 1. [CRITICAL] {issue_title}
    文件: {file}
    问题: {reason}
    建议: {suggestion}
-...
+   ...
 
 请确保所有 CRITICAL 问题必须修复。
 ```
@@ -131,6 +136,7 @@ FAIL → 构建修正 prompt → claude-code 修正
 ## 智能并行调度
 
 ### 任务依赖图
+
 ```javascript
 const taskGraph = engine._buildTaskGraph(tasks);
 // 自动分析依赖关系
@@ -138,6 +144,7 @@ const taskGraph = engine._buildTaskGraph(tasks);
 ```
 
 ### 执行流程
+
 ```
 里程碑 1: [t1, t2, t3, t4]
   t1 ──┬── t3 ── t4
@@ -177,7 +184,7 @@ for (const milestone of plan.milestones) {
   // 自动并行调度可用任务
   // 等待依赖满足后执行后续任务
   const results = await engine._executeMilestone(milestone, plan);
-  
+
   // 里程碑结束 → 创建检查点
   await engine._createCheckpoint(`milestone_${milestone.id}`);
 }
@@ -220,6 +227,7 @@ for (const milestone of plan.milestones) {
 ```
 
 恢复执行：
+
 ```javascript
 await engine.restore('cp_1234567890');
 ```
@@ -238,12 +246,12 @@ await engine.restore('cp_1234567890');
 
 ## 异常处理
 
-| 异常 | 处理 |
-|------|------|
-| claude-code 超时 | 重试 3 次，仍失败 → failed |
-| opencode 评审失败 | 标记 failed |
-| 修正循环超限 | needs_human |
-| Agent 崩溃 | 切换备用（如有） |
+| 异常              | 处理                       |
+| ----------------- | -------------------------- |
+| claude-code 超时  | 重试 3 次，仍失败 → failed |
+| opencode 评审失败 | 标记 failed                |
+| 修正循环超限      | needs_human                |
+| Agent 崩溃        | 切换备用（如有）           |
 
 ## 进度报告
 

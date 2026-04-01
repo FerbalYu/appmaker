@@ -1,12 +1,12 @@
 /**
  * AI Permission Classifier - 智能权限分类器
- * 
+ *
  * 核心功能：
  * - 基于上下文和规则的混合权限决策
  * - 自动审批低风险操作
  * - 高风险操作需要人工确认或拒绝
  * - 学习机制：记录决策历史，改进分类准确性
- * 
+ *
  * 权限等级：
  * - AUTO_ALLOW: 自动批准，无需确认
  * - AUTO_DENY: 自动拒绝
@@ -22,7 +22,7 @@ export const PermissionLevel = {
   AUTO_ALLOW: 'auto_allow',
   AUTO_DENY: 'auto_deny',
   NEED_CONFIRM: 'need_confirm',
-  DELEGATE_AI: 'delegate_ai'
+  DELEGATE_AI: 'delegate_ai',
 };
 
 export const RiskLevel = {
@@ -30,37 +30,157 @@ export const RiskLevel = {
   LOW: 1,
   MEDIUM: 2,
   HIGH: 3,
-  CRITICAL: 4
+  CRITICAL: 4,
 };
 
 const DEFAULT_RULES = {
   file_read: {
-    allowed_extensions: ['.js', '.ts', '.tsx', '.jsx', '.json', '.md', '.txt', '.css', '.html', '.vue', '.py', '.go', '.rs', '.java', '.kt', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf'],
-    denied_paths: ['/etc/', '/sys/', '/proc/', '/dev/', '.env', '.aws/credentials', '/root/.ssh/', 'package-lock.json', 'yarn.lock'],
+    allowed_extensions: [
+      '.js',
+      '.ts',
+      '.tsx',
+      '.jsx',
+      '.json',
+      '.md',
+      '.txt',
+      '.css',
+      '.html',
+      '.vue',
+      '.py',
+      '.go',
+      '.rs',
+      '.java',
+      '.kt',
+      '.xml',
+      '.yaml',
+      '.yml',
+      '.toml',
+      '.ini',
+      '.cfg',
+      '.conf',
+    ],
+    denied_paths: [
+      '/etc/',
+      '/sys/',
+      '/proc/',
+      '/dev/',
+      '.env',
+      '.aws/credentials',
+      '/root/.ssh/',
+      'package-lock.json',
+      'yarn.lock',
+    ],
     risk_level: RiskLevel.LOW,
-    default_action: PermissionLevel.AUTO_ALLOW
+    default_action: PermissionLevel.AUTO_ALLOW,
   },
   file_write: {
-    allowed_extensions: ['.js', '.ts', '.tsx', '.jsx', '.json', '.md', '.txt', '.css', '.html', '.vue', '.py', '.go', '.rs', '.java', '.kt', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf'],
-    denied_paths: ['/etc/', '/sys/', '/proc/', '/dev/', '/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/', '.env', '.aws/credentials'],
+    allowed_extensions: [
+      '.js',
+      '.ts',
+      '.tsx',
+      '.jsx',
+      '.json',
+      '.md',
+      '.txt',
+      '.css',
+      '.html',
+      '.vue',
+      '.py',
+      '.go',
+      '.rs',
+      '.java',
+      '.kt',
+      '.xml',
+      '.yaml',
+      '.yml',
+      '.toml',
+      '.ini',
+      '.cfg',
+      '.conf',
+    ],
+    denied_paths: [
+      '/etc/',
+      '/sys/',
+      '/proc/',
+      '/dev/',
+      '/usr/bin/',
+      '/usr/sbin/',
+      '/bin/',
+      '/sbin/',
+      '.env',
+      '.aws/credentials',
+    ],
     risk_level: RiskLevel.MEDIUM,
-    default_action: PermissionLevel.NEED_CONFIRM
+    default_action: PermissionLevel.NEED_CONFIRM,
   },
   bash_execute: {
-    allowed_commands: ['git', 'npm', 'npx', 'bun', 'node', 'python', 'python3', 'cargo', 'rustc', 'go', 'java', 'javac', 'make', 'cmake', 'ls', 'cat', 'grep', 'find', 'echo', 'pwd', 'cd', 'mkdir', 'touch', 'rm', 'cp', 'mv', 'chmod', 'chown'],
-    denied_patterns: ['rm -rf', 'dd if=', ':(){:|:&};:', 'mkfs', 'fdisk', 'shutdown', 'reboot', 'halt', 'init 0', 'kill -9', 'curl.*-o.*sh', 'wget.*sh', 'eval ', 'exec ', '> /dev/', '2>&1'],
+    allowed_commands: [
+      'git',
+      'npm',
+      'npx',
+      'bun',
+      'node',
+      'python',
+      'python3',
+      'cargo',
+      'rustc',
+      'go',
+      'java',
+      'javac',
+      'make',
+      'cmake',
+      'ls',
+      'cat',
+      'grep',
+      'find',
+      'echo',
+      'pwd',
+      'cd',
+      'mkdir',
+      'touch',
+      'rm',
+      'cp',
+      'mv',
+      'chmod',
+      'chown',
+    ],
+    denied_patterns: [
+      'rm -rf',
+      'dd if=',
+      ':(){:|:&};:',
+      'mkfs',
+      'fdisk',
+      'shutdown',
+      'reboot',
+      'halt',
+      'init 0',
+      'kill -9',
+      'curl.*-o.*sh',
+      'wget.*sh',
+      'eval ',
+      'exec ',
+      '> /dev/',
+      '2>&1',
+    ],
     risk_level: RiskLevel.HIGH,
-    default_action: PermissionLevel.NEED_CONFIRM
+    default_action: PermissionLevel.NEED_CONFIRM,
   },
   network_request: {
-    allowed_domains: ['api.github.com', 'registry.npmjs.org', 'crates.io', 'pypi.org', 'api.openai.com', 'api.anthropic.com'],
+    allowed_domains: [
+      'api.github.com',
+      'registry.npmjs.org',
+      'crates.io',
+      'pypi.org',
+      'api.openai.com',
+      'api.anthropic.com',
+    ],
     risk_level: RiskLevel.LOW,
-    default_action: PermissionLevel.AUTO_ALLOW
+    default_action: PermissionLevel.AUTO_ALLOW,
   },
- 危险操作: {
+  危险操作: {
     risk_level: RiskLevel.CRITICAL,
-    default_action: PermissionLevel.AUTO_DENY
-  }
+    default_action: PermissionLevel.AUTO_DENY,
+  },
 };
 
 export class PermissionClassifier {
@@ -71,7 +191,7 @@ export class PermissionClassifier {
       enable_ai_delegation: true,
       learn_from_history: true,
       history_file: config.history_file || './.appmaker/permission-history.jsonl',
-      ...config
+      ...config,
     };
 
     this.rules = { ...DEFAULT_RULES, ...config.custom_rules };
@@ -81,7 +201,7 @@ export class PermissionClassifier {
       auto_allowed: 0,
       auto_denied: 0,
       ai_delegated: 0,
-      confirmed: 0
+      confirmed: 0,
     };
   }
 
@@ -137,7 +257,11 @@ export class PermissionClassifier {
   _quickPathDecision(toolName, args) {
     const toolLower = toolName.toLowerCase();
 
-    if (toolLower.includes('read') || toolLower === 'read_file' || toolLower === 'read_multiple_files') {
+    if (
+      toolLower.includes('read') ||
+      toolLower === 'read_file' ||
+      toolLower === 'read_multiple_files'
+    ) {
       return this._evaluateReadOperation(args);
     }
 
@@ -149,7 +273,11 @@ export class PermissionClassifier {
       return this._evaluateBashOperation(args);
     }
 
-    if (toolLower.includes('network') || toolLower.includes('http') || toolLower.includes('fetch')) {
+    if (
+      toolLower.includes('network') ||
+      toolLower.includes('http') ||
+      toolLower.includes('fetch')
+    ) {
       return this._evaluateNetworkOperation(args);
     }
 
@@ -158,7 +286,7 @@ export class PermissionClassifier {
 
   _evaluateReadOperation(args) {
     const filePath = args?.file_path || args?.path || '';
-    
+
     for (const denied of this.rules.file_read.denied_paths) {
       if (filePath.includes(denied)) {
         return { risk: RiskLevel.HIGH, reason: `读取受限路径: ${denied}` };
@@ -175,7 +303,7 @@ export class PermissionClassifier {
 
   _evaluateWriteOperation(args) {
     const filePath = args?.file_path || args?.path || '';
-    
+
     for (const denied of this.rules.file_write.denied_paths) {
       if (filePath.includes(denied)) {
         return { risk: RiskLevel.CRITICAL, reason: `写入系统受限路径: ${denied}` };
@@ -192,7 +320,7 @@ export class PermissionClassifier {
 
   _evaluateBashOperation(args) {
     const command = args?.command || args?.cmd || '';
-    
+
     for (const denied of this.rules.bash_execute.denied_patterns) {
       if (command.toLowerCase().includes(denied.toLowerCase())) {
         return { risk: RiskLevel.CRITICAL, reason: `危险命令模式: ${denied}` };
@@ -201,7 +329,7 @@ export class PermissionClassifier {
 
     const cmdParts = command.trim().split(/\s+/);
     const baseCmd = cmdParts[0];
-    
+
     if (!this.rules.bash_execute.allowed_commands.includes(baseCmd)) {
       return { risk: RiskLevel.HIGH, reason: `未授权命令: ${baseCmd}` };
     }
@@ -215,10 +343,10 @@ export class PermissionClassifier {
 
   _evaluateNetworkOperation(args) {
     const url = args?.url || '';
-    
+
     try {
       const hostname = new URL(url).hostname;
-      if (!this.rules.network_request.allowed_domains.some(d => hostname.includes(d))) {
+      if (!this.rules.network_request.allowed_domains.some((d) => hostname.includes(d))) {
         return { risk: RiskLevel.MEDIUM, reason: `非白名单域名: ${hostname}` };
       }
     } catch {
@@ -234,7 +362,7 @@ export class PermissionClassifier {
    */
   async _evaluateRisk(toolCall) {
     const quickResult = this._quickPathDecision(toolCall.tool_name, toolCall.arguments);
-    
+
     if (quickResult) {
       return quickResult.risk;
     }
@@ -254,10 +382,10 @@ export class PermissionClassifier {
   async _aiEvaluateRisk(toolCall) {
     const context = toolCall.context || {};
     const history = context.task_history || [];
-    const similarPast = history.filter(h => h.tool_name === toolCall.tool_name);
-    
+    const similarPast = history.filter((h) => h.tool_name === toolCall.tool_name);
+
     if (similarPast.length > 5) {
-      const successRate = similarPast.filter(h => h.success).length / similarPast.length;
+      const successRate = similarPast.filter((h) => h.success).length / similarPast.length;
       if (successRate > 0.95) return RiskLevel.LOW;
       if (successRate < 0.5) return RiskLevel.HIGH;
     }
@@ -295,7 +423,7 @@ export class PermissionClassifier {
         timestamp: new Date().toISOString(),
         tool_name: toolCall.tool_name,
         decision: decision,
-        args_hash: this._hashArgs(toolCall.arguments)
+        args_hash: this._hashArgs(toolCall.arguments),
       };
 
       const dir = path.dirname(this.config.history_file);
@@ -303,11 +431,7 @@ export class PermissionClassifier {
         await fs.mkdir(dir, { recursive: true });
       }
 
-      await fs.appendFile(
-        this.config.history_file,
-        JSON.stringify(record) + '\n',
-        'utf-8'
-      );
+      await fs.appendFile(this.config.history_file, JSON.stringify(record) + '\n', 'utf-8');
     } catch (error) {
       console.warn('[PermissionClassifier] 记录决策历史失败:', error.message);
     }
@@ -343,7 +467,7 @@ export class PermissionClassifier {
   getStats() {
     return {
       ...this.stats,
-      cache_size: this.decisionCache.size
+      cache_size: this.decisionCache.size,
     };
   }
 
@@ -356,7 +480,7 @@ export class PermissionClassifier {
       auto_allowed: 0,
       auto_denied: 0,
       ai_delegated: 0,
-      confirmed: 0
+      confirmed: 0,
     };
     this.decisionCache.clear();
   }

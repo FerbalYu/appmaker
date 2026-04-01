@@ -45,7 +45,7 @@ import { createDaemon } from './src/daemon/index.js';
 const daemon = await createDaemon({
   dataDir: './.daemon',
   heartbeatInterval: 30000,
-  autoSaveInterval: 60000
+  autoSaveInterval: 60000,
 });
 
 await daemon.start();
@@ -53,7 +53,7 @@ await daemon.start();
 // 创建会话
 const session = await daemon.createSession({
   name: 'my-agent',
-  mode: 'background'
+  mode: 'background',
 });
 
 // 发送消息
@@ -64,7 +64,7 @@ await daemon.processTask({
   name: 'process-data',
   type: 'transform',
   priority: 2,
-  payload: { data: [1, 2, 3] }
+  payload: { data: [1, 2, 3] },
 });
 
 // 停止
@@ -100,26 +100,38 @@ const memory = new MemoryStore({ dbPath: './memory.db' });
 await memory.initialize();
 
 // 语义记忆（概念性知识）
-await memory.store('semantic', {
-  concept: '递归',
-  definition: '函数调用自身的过程'
-}, { tags: ['algorithm', 'basic'] });
+await memory.store(
+  'semantic',
+  {
+    concept: '递归',
+    definition: '函数调用自身的过程',
+  },
+  { tags: ['algorithm', 'basic'] },
+);
 
 // 情景记忆（事件序列）
-await memory.store('episodic', {
-  event: '用户反馈',
-  details: '需要优化性能'
-}, { tags: ['feedback', '2024'] });
+await memory.store(
+  'episodic',
+  {
+    event: '用户反馈',
+    details: '需要优化性能',
+  },
+  { tags: ['feedback', '2024'] },
+);
 
 // 程序记忆（技能和流程）
-await memory.store('procedural', {
-  skill: '代码重构',
-  steps: ['识别坏味道', '提取方法', '应用设计模式']
-}, { tags: ['refactor'] });
+await memory.store(
+  'procedural',
+  {
+    skill: '代码重构',
+    steps: ['识别坏味道', '提取方法', '应用设计模式'],
+  },
+  { tags: ['refactor'] },
+);
 
 // 查询记忆
 const results = await memory.query('semantic', {
-  tags: ['algorithm']
+  tags: ['algorithm'],
 });
 ```
 
@@ -135,7 +147,7 @@ const memory = new ContextualMemory();
 // 添加到上下文
 await memory.pushContext('session-123', {
   user: 'input',
-  text: '帮我优化这个排序算法'
+  text: '帮我优化这个排序算法',
 });
 
 // 获取完整上下文
@@ -143,7 +155,7 @@ const context = await memory.getContext('session-123');
 
 // 合并总结
 await memory.mergeContext('session-123', {
-  summary: '用户需要优化排序算法，可能涉及时间复杂度改进'
+  summary: '用户需要优化排序算法，可能涉及时间复杂度改进',
 });
 ```
 
@@ -156,29 +168,29 @@ import { SessionManager, AGENT_MODE } from './src/daemon/session-manager.js';
 
 const sessions = new SessionManager({
   maxConcurrentSessions: 10,
-  maxIdleTime: 5 * 60 * 1000
+  maxIdleTime: 5 * 60 * 1000,
 });
 
 // 创建会话
 const session = await sessions.create({
   name: 'coding-agent',
   mode: AGENT_MODE.BACKGROUND,
-  metadata: { type: 'assistant' }
+  metadata: { type: 'assistant' },
 });
 
 // 发送消息
 await sessions.sendMessage(session.id, '用户输入...', {
-  type: 'user'
+  type: 'user',
 });
 
 // 获取历史
 const history = await sessions.getHistory(session.id, {
-  limit: 10
+  limit: 10,
 });
 
 // 更新上下文
 await sessions.updateContext(session.id, {
-  variables: { current_file: 'src/main.js' }
+  variables: { current_file: 'src/main.js' },
 });
 
 // 暂停/恢复
@@ -198,21 +210,21 @@ import { TaskQueue, TASK_PRIORITY } from './src/daemon/task-queue.js';
 
 const queue = new TaskQueue({
   maxConcurrent: 5,
-  maxRetries: 3
+  maxRetries: 3,
 });
 
 // 入队（无依赖）
 const task1 = await queue.enqueue({
   name: 'task-1',
   type: 'process',
-  priority: TASK_PRIORITY.HIGH
+  priority: TASK_PRIORITY.HIGH,
 });
 
 // 入队（带依赖）
 const task2 = await queue.enqueue({
   name: 'task-2',
   type: 'process',
-  dependencies: [task1.id]
+  dependencies: [task1.id],
 });
 
 // 处理任务
@@ -286,7 +298,7 @@ const daemon = await createDaemon({
   dataDir: './.daemon',
   recoveryEnabled: true,
   maxRetries: 3,
-  heartbeatInterval: 30000
+  heartbeatInterval: 30000,
 });
 
 daemon.on('recover', async (savedState) => {

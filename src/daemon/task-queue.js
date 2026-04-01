@@ -14,7 +14,7 @@ export const TASK_STATUS = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
-  BLOCKED: 'blocked'
+  BLOCKED: 'blocked',
 };
 
 export const TASK_PRIORITY = {
@@ -22,7 +22,7 @@ export const TASK_PRIORITY = {
   NORMAL: 1,
   HIGH: 2,
   CRITICAL: 3,
-  URGENT: 4
+  URGENT: 4,
 };
 
 export class Task {
@@ -46,13 +46,13 @@ export class Task {
       queued: null,
       started: null,
       completed: null,
-      duration: 0
+      duration: 0,
     };
 
     this.retry = {
       count: 0,
       maxRetries: config.maxRetries || 3,
-      backoff: config.backoff || 1000
+      backoff: config.backoff || 1000,
     };
 
     this.metadata = config.metadata || {};
@@ -62,7 +62,7 @@ export class Task {
     this.progress = {
       current: 0,
       total: 100,
-      message: ''
+      message: '',
     };
   }
 
@@ -86,7 +86,7 @@ export class Task {
       metadata: this.metadata,
       tags: this.tags,
       sessionId: this.sessionId,
-      progress: this.progress
+      progress: this.progress,
     };
   }
 }
@@ -102,7 +102,7 @@ export class TaskQueue extends EventEmitter {
       defaultTimeout: config.defaultTimeout || 5 * 60 * 1000,
       autoCleanup: config.autoCleanup !== false,
       cleanupInterval: config.cleanupInterval || 60 * 60 * 1000,
-      ...config
+      ...config,
     };
 
     this.tasks = new Map();
@@ -111,7 +111,7 @@ export class TaskQueue extends EventEmitter {
       [TASK_PRIORITY.CRITICAL]: [],
       [TASK_PRIORITY.HIGH]: [],
       [TASK_PRIORITY.NORMAL]: [],
-      [TASK_PRIORITY.LOW]: []
+      [TASK_PRIORITY.LOW]: [],
     };
 
     this.running = new Map();
@@ -124,7 +124,7 @@ export class TaskQueue extends EventEmitter {
       info: () => {},
       debug: () => {},
       warn: () => {},
-      error: () => {}
+      error: () => {},
     };
 
     if (this.logger && !this.logger.debug) {
@@ -136,7 +136,7 @@ export class TaskQueue extends EventEmitter {
       processed: 0,
       failed: 0,
       cancelled: 0,
-      retries: 0
+      retries: 0,
     };
 
     if (this.config.autoCleanup) {
@@ -229,12 +229,11 @@ export class TaskQueue extends EventEmitter {
       this.stats.processed++;
       this._emit('task:complete', task);
       this.logger.info(`Task completed: ${task.id} in ${task.timing.duration}ms`);
-
     } catch (error) {
       task.error = {
         message: error.message,
         stack: error.stack,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
       if (task.retry.count < task.retry.maxRetries) {
@@ -261,9 +260,11 @@ export class TaskQueue extends EventEmitter {
   async _retryTask(task) {
     const backoffTime = task.retry.backoff * Math.pow(2, task.retry.count - 1);
 
-    this.logger.info(`Retrying task ${task.id} in ${backoffTime}ms (attempt ${task.retry.count}/${task.retry.maxRetries})`);
+    this.logger.info(
+      `Retrying task ${task.id} in ${backoffTime}ms (attempt ${task.retry.count}/${task.retry.maxRetries})`,
+    );
 
-    await new Promise(resolve => {
+    await new Promise((resolve) => {
       const timer = setTimeout(resolve, backoffTime);
       timer.unref();
     });
@@ -308,23 +309,23 @@ export class TaskQueue extends EventEmitter {
     let tasks = Array.from(this.tasks.values());
 
     if (options.status) {
-      tasks = tasks.filter(t => t.status === options.status);
+      tasks = tasks.filter((t) => t.status === options.status);
     }
 
     if (options.priority !== undefined) {
-      tasks = tasks.filter(t => t.priority === options.priority);
+      tasks = tasks.filter((t) => t.priority === options.priority);
     }
 
     if (options.type) {
-      tasks = tasks.filter(t => t.type === options.type);
+      tasks = tasks.filter((t) => t.type === options.type);
     }
 
     if (options.sessionId) {
-      tasks = tasks.filter(t => t.sessionId === options.sessionId);
+      tasks = tasks.filter((t) => t.sessionId === options.sessionId);
     }
 
     if (options.since) {
-      tasks = tasks.filter(t => t.timing.created >= options.since);
+      tasks = tasks.filter((t) => t.timing.created >= options.since);
     }
 
     if (options.sortBy) {
@@ -408,7 +409,7 @@ export class TaskQueue extends EventEmitter {
       return true;
     }
 
-    return task.dependencies.every(depId => {
+    return task.dependencies.every((depId) => {
       const depTask = this.tasks.get(depId);
       return depTask && depTask.status === TASK_STATUS.COMPLETED;
     });
@@ -433,7 +434,7 @@ export class TaskQueue extends EventEmitter {
       const task = this._getNextTask();
       if (!task) break;
 
-      this._executeTask(task).catch(error => {
+      this._executeTask(task).catch((error) => {
         this.logger.error(`Task execution error: ${task.id}`, error);
       });
     }
@@ -470,7 +471,7 @@ export class TaskQueue extends EventEmitter {
     this.cleanupTimer = setInterval(async () => {
       const oldTasks = this.list({
         status: TASK_STATUS.COMPLETED,
-        since: Date.now() - 24 * 60 * 60 * 1000
+        since: Date.now() - 24 * 60 * 60 * 1000,
       });
 
       for (const task of oldTasks) {
@@ -499,9 +500,7 @@ export class TaskQueue extends EventEmitter {
       running: this.getRunning().length,
       completed: this.getCompleted().length,
       failed: this.getFailed().length,
-      byPriority: Object.fromEntries(
-        Object.entries(this.queues).map(([p, q]) => [p, q.length])
-      )
+      byPriority: Object.fromEntries(Object.entries(this.queues).map(([p, q]) => [p, q.length])),
     };
   }
 

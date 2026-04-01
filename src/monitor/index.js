@@ -17,14 +17,25 @@ export class ProgressMonitor {
 
   _hookEvents() {
     const eventsToForward = [
-      'think:start', 'think:message', 'think:done',
-      'plan:start', 'plan:done', 'plan:ready',
-      'milestone:start', 'milestone:done',
-      'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'task:retry_wait',
-      'agent:action', 'execution:done'
+      'think:start',
+      'think:message',
+      'think:done',
+      'plan:start',
+      'plan:done',
+      'plan:ready',
+      'milestone:start',
+      'milestone:done',
+      'task:start',
+      'task:done',
+      'task:error',
+      'task:review',
+      'task:progress',
+      'task:retry_wait',
+      'agent:action',
+      'execution:done',
     ];
 
-    eventsToForward.forEach(eventName => {
+    eventsToForward.forEach((eventName) => {
       this.bus.on(eventName, (data) => {
         this._broadcast(eventName, data);
       });
@@ -40,7 +51,9 @@ export class ProgressMonitor {
     for (const { controller } of this.clients) {
       try {
         controller.enqueue(`data: ${payload}\n\n`);
-      } catch { /* client disconnected */ }
+      } catch {
+        /* client disconnected */
+      }
     }
   }
 
@@ -60,7 +73,7 @@ export class ProgressMonitor {
               } else {
                 reject(err);
               }
-            }
+            },
           });
           this.port = this.server.port;
           resolve(`http://localhost:${this.port}`);
@@ -105,9 +118,9 @@ export class ProgressMonitor {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*'
-        }
+          Connection: 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+        },
       });
     }
 
@@ -116,7 +129,7 @@ export class ProgressMonitor {
       try {
         const content = readFileSync(path.join(__dirname, 'public', 'index.html'));
         return new Response(content, {
-          headers: { 'Content-Type': 'text/html' }
+          headers: { 'Content-Type': 'text/html' },
         });
       } catch {
         return new Response('Error loading dashboard', { status: 500 });
@@ -131,7 +144,11 @@ export class ProgressMonitor {
       this.server.stop();
     }
     for (const { controller } of this.clients) {
-      try { controller.enqueue(''); } catch { /* ignore */ }
+      try {
+        controller.enqueue('');
+      } catch {
+        /* ignore */
+      }
     }
     this.clients.clear();
   }

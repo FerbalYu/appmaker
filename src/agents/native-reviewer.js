@@ -1,6 +1,6 @@
 /**
  * Native Reviewer Adapter - AI 代码审查 Agent
- * 
+ *
  * 集成 UniversalToolbox，支持：
  * - 文件读取工具
  * - Bash 命令执行
@@ -14,16 +14,24 @@ import { jsonrepair } from 'jsonrepair';
 const NATIVE_REVIEWER_CONFIG = {
   name: 'native-reviewer',
   type: 'api',
-  capabilities: ['code-review', 'quality-assurance', 'static-analysis']
+  capabilities: ['code-review', 'quality-assurance', 'static-analysis'],
 };
 
 export class NativeReviewerAdapter extends AgentAdapter {
   constructor(config = {}) {
     super({ ...NATIVE_REVIEWER_CONFIG, ...config });
     this.apiKey = process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY || config.api_key;
-    this.apiHost = process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST || config.api_host || 'https://api.minimaxi.com';
-    this.model = process.env.OPENAI_MODEL || process.env.MINIMAX_API_MODEL || config.model || 'MiniMax-Text-01';
-    
+    this.apiHost =
+      process.env.OPENAI_API_BASE ||
+      process.env.MINIMAX_API_HOST ||
+      config.api_host ||
+      'https://api.minimaxi.com';
+    this.model =
+      process.env.OPENAI_MODEL ||
+      process.env.MINIMAX_API_MODEL ||
+      config.model ||
+      'MiniMax-Text-01';
+
     if (config.project_root) {
       this.toolbox.config.workspace_root = config.project_root;
     }
@@ -40,37 +48,37 @@ export class NativeReviewerAdapter extends AgentAdapter {
   _getToolsDescription() {
     const tools = this.getTools();
     const categories = {
-      file: tools.filter(t => t.category === 'file_system').slice(0, 4),
-      bash: tools.filter(t => t.category === 'bash').slice(0, 2),
-      git: tools.filter(t => t.category === 'git'),
-      lsp: tools.filter(t => t.category === 'lsp')
+      file: tools.filter((t) => t.category === 'file_system').slice(0, 4),
+      bash: tools.filter((t) => t.category === 'bash').slice(0, 2),
+      git: tools.filter((t) => t.category === 'git'),
+      lsp: tools.filter((t) => t.category === 'lsp'),
     };
 
     let desc = '';
-    
+
     if (categories.file.length) {
       desc += '\n【文件读取工具】\n';
-      categories.file.forEach(t => {
+      categories.file.forEach((t) => {
         if (t.name.includes('read') || t.name.includes('file')) {
           desc += `- ${t.name}: ${t.description}\n`;
         }
       });
     }
-    
+
     if (categories.lsp.length) {
       desc += '\n【LSP 代码分析工具】\n';
-      categories.lsp.forEach(t => {
+      categories.lsp.forEach((t) => {
         desc += `- ${t.name}: ${t.description}\n`;
       });
     }
-    
+
     if (categories.git.length) {
       desc += '\n【Git 工具】\n';
-      categories.git.forEach(t => {
+      categories.git.forEach((t) => {
         desc += `- ${t.name}: ${t.description}\n`;
       });
     }
-    
+
     return desc;
   }
 
@@ -80,18 +88,18 @@ export class NativeReviewerAdapter extends AgentAdapter {
    */
   async _readFilesForReview(filePaths, projectRoot) {
     const contents = [];
-    
+
     for (const filepath of filePaths) {
       const result = await this.executeTool('read_file', { file_path: filepath });
       if (result.success) {
         contents.push({
           path: filepath,
           content: result.result.content,
-          size: result.result.size
+          size: result.result.size,
         });
       }
     }
-    
+
     return contents;
   }
 
@@ -101,20 +109,20 @@ export class NativeReviewerAdapter extends AgentAdapter {
    */
   async _getLspDiagnostics(filePaths) {
     const diagnostics = [];
-    
+
     for (const filepath of filePaths) {
       const result = await this.executeTool('lsp_diagnostics', {
         file_path: filepath,
-        language_server: 'typescript'
+        language_server: 'typescript',
       });
       if (result.success && result.result) {
         diagnostics.push({
           file: filepath,
-          issues: result.result
+          issues: result.result,
         });
       }
     }
-    
+
     return diagnostics;
   }
 
@@ -131,28 +139,30 @@ export class NativeReviewerAdapter extends AgentAdapter {
     const startTime = Date.now();
     try {
       if (!this.apiKey) {
-        throw new Error('API Key missing. Please set OPENAI_API_KEY or MINIMAX_API_KEY for native-reviewer');
+        throw new Error(
+          'API Key missing. Please set OPENAI_API_KEY or MINIMAX_API_KEY for native-reviewer',
+        );
       }
 
       const projectRoot = task.context?.project_root || '.';
       const toolsDescription = this._getToolsDescription();
 
-      let codeToReview = "无需审查 (没有任何文件被创建或修改)";
+      let codeToReview = '无需审查 (没有任何文件被创建或修改)';
       let filesReviewed = [];
 
       if (task.context?.code_result) {
         const cr = task.context.code_result.output || task.context.code_result;
         const filesToRead = [...(cr.files_created || []), ...(cr.files_modified || [])];
-        
+
         if (filesToRead.length > 0) {
           const fileContents = await this._readFilesForReview(filesToRead, projectRoot);
-          
+
           if (fileContents.length > 0) {
             codeToReview = fileContents
-              .map(f => `--- 文件: ${f.path} (${f.size} bytes) ---\n${f.content}\n`)
+              .map((f) => `--- 文件: ${f.path} (${f.size} bytes) ---\n${f.content}\n`)
               .join('\n');
-            filesReviewed = fileContents.map(f => f.path);
-            
+            filesReviewed = fileContents.map((f) => f.path);
+
             const lspDiagnostics = await this._getLspDiagnostics(filesToRead);
             if (lspDiagnostics.length > 0) {
               codeToReview += '\n\n--- LSP 诊断信息 ---\n';
@@ -207,9 +217,10 @@ ${toolsDescription}
 - 如果没有问题且确实有实质产出，且全额覆盖了子任务，score 设为 100，issues 设为空数组
 不要包含任何 Markdown 标签或额外文字。`;
 
-      const subtasksSection = task.subtasks && task.subtasks.length > 0 
-        ? `\n## 需要验证的子任务列表\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n` 
-        : '';
+      const subtasksSection =
+        task.subtasks && task.subtasks.length > 0
+          ? `\n## 需要验证的子任务列表\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n`
+          : '';
 
       const userPrompt = `## 项目需求
 ${task.description}
@@ -218,16 +229,16 @@ ${task.context?.architecture_rules ? `## 架构规范\n${task.context.architectu
 ${task.context?.quality_rules ? `## 质量规范\n${task.context.quality_rules.substring(0, 800)}\n` : ''}
 
 ## 待审查文件
-${filesReviewed.length > 0 ? filesReviewed.map(f => `- ${f}`).join('\n') : '无'}
+${filesReviewed.length > 0 ? filesReviewed.map((f) => `- ${f}`).join('\n') : '无'}
 
 ## 代码内容
 ${codeToReview}
 
 请输出严格的 JSON 审查结果。`;
 
-      const endpoint = this.apiHost.endsWith('/v1') 
-          ? `${this.apiHost}/chat/completions` 
-          : `${this.apiHost}/v1/chat/completions`;
+      const endpoint = this.apiHost.endsWith('/v1')
+        ? `${this.apiHost}/chat/completions`
+        : `${this.apiHost}/v1/chat/completions`;
 
       console.log(`[${this.name}] 请求原生 API 进行代码审查... (Model: ${this.model})`);
       console.log(`[${this.name}] 审查文件数: ${filesReviewed.length}`);
@@ -236,11 +247,11 @@ ${codeToReview}
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3
+        temperature: 0.3,
       };
-      
+
       if (this.apiHost.includes('minimaxi.com')) {
         payload.extra_body = { reasoning_split: true };
       }
@@ -251,11 +262,11 @@ ${codeToReview}
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-        signal: abortController.signal
+        signal: abortController.signal,
       });
       clearTimeout(hardTimeoutId);
 
@@ -264,26 +275,28 @@ ${codeToReview}
       }
 
       const data = await res.json();
-      
+
       if (data.base_resp && data.base_resp.status_code !== 0) {
-        throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+        throw new Error(
+          `MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`,
+        );
       } else if (data.error) {
         throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
       }
-      
+
       if (!data.choices || data.choices.length === 0) {
         throw new Error(`API 响应结构异常`);
       }
-      
+
       const message = data.choices[0].message;
-      
+
       if (message.reasoning_details && message.reasoning_details.length > 0) {
-        const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+        const reasoningText = message.reasoning_details.map((r) => r.text).join('\n');
         if (typeof this.emit === 'function') {
           this.emit('action', { type: 'think', content: reasoningText.trim() });
         }
       }
-      
+
       const contentStr = message.content;
       const resultObj = this._extractJSON(contentStr);
 
@@ -291,17 +304,19 @@ ${codeToReview}
         throw new Error(`解析 JSON 失败 (评分未能提取): ${contentStr.substring(0, 150)}...`);
       }
 
-      return this._formatResult({
-        task_id: task.id,
-        success: true,
-        score: typeof resultObj.score === 'number' ? resultObj.score : 80,
-        summary: resultObj.summary || resultObj.comments || '无评价',
-        issues: resultObj.issues || [],
-        files_reviewed: filesReviewed,
-        tokens_used: data.usage?.total_tokens || 0,
-        duration_ms: Date.now() - startTime
-      }, startTime);
-
+      return this._formatResult(
+        {
+          task_id: task.id,
+          success: true,
+          score: typeof resultObj.score === 'number' ? resultObj.score : 80,
+          summary: resultObj.summary || resultObj.comments || '无评价',
+          issues: resultObj.issues || [],
+          files_reviewed: filesReviewed,
+          tokens_used: data.usage?.total_tokens || 0,
+          duration_ms: Date.now() - startTime,
+        },
+        startTime,
+      );
     } catch (error) {
       console.error(`[${this.name}] 执行异常: `, error.message);
       return this.handleError(error);
@@ -310,16 +325,16 @@ ${codeToReview}
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
-    
+
     // Capture <think> block and emit to telemetry before stripping
     const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
     if (thinkMatch && typeof this.emit === 'function') {
       this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
     }
-    
+
     // Strip <think>...</think> reasoning tags which corrupt JSON matching
     output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    
+
     // 1. Try code blocks
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     if (codeBlocks.length > 0) {
@@ -329,27 +344,40 @@ ${codeToReview}
         } catch (e) {
           try {
             return JSON.parse(jsonrepair(match[1].trim()));
-          } catch(e2) {}
+          } catch (e2) {
+            /* ignore repair errors */
+          }
         }
       }
     }
-    
+
     // 2. Try JSON Object syntaxes through brace matching
     const braceCount = (output.match(/[{}]/g) || []).length;
     if (braceCount >= 2) {
-      let depth = 0, validEnd = -1, firstBrace = output.indexOf('{');
+      let depth = 0,
+        validEnd = -1,
+        firstBrace = output.indexOf('{');
       if (firstBrace !== -1) {
         for (let i = firstBrace; i < output.length; i++) {
           if (output[i] === '{') depth++;
           else if (output[i] === '}') {
             depth--;
-            if (depth === 0) { validEnd = i; break; }
+            if (depth === 0) {
+              validEnd = i;
+              break;
+            }
           }
         }
         if (validEnd > firstBrace) {
           const candidate = output.substring(firstBrace, validEnd + 1);
-          try { return JSON.parse(candidate); } catch(e) {
-            try { return JSON.parse(jsonrepair(candidate)); } catch {}
+          try {
+            return JSON.parse(candidate);
+          } catch (e) {
+            try {
+              return JSON.parse(jsonrepair(candidate));
+            } catch (_) {
+              /* ignore repair errors */
+            }
           }
         }
       }
@@ -359,7 +387,7 @@ ${codeToReview}
     try {
       return JSON.parse(jsonrepair(output));
     } catch {
-       console.warn(`[${this.name}] 全文 JSON 解析失败`);
+      console.warn(`[${this.name}] 全文 JSON 解析失败`);
     }
 
     return null;
@@ -374,13 +402,13 @@ ${codeToReview}
         score: rawResult.score,
         summary: rawResult.summary,
         issues: rawResult.issues,
-        files_reviewed: rawResult.files_reviewed || []
+        files_reviewed: rawResult.files_reviewed || [],
       },
       metrics: {
-        duration_ms: rawResult.duration_ms || (Date.now() - startTime),
-        tokens_used: rawResult.tokens_used || 0
+        duration_ms: rawResult.duration_ms || Date.now() - startTime,
+        tokens_used: rawResult.tokens_used || 0,
       },
-      errors: []
+      errors: [],
     };
   }
 }

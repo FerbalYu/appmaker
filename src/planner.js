@@ -1,6 +1,6 @@
 /**
  * Planner - 自然语言需求 → 执行计划
- * 
+ *
  * 核心能力：
  * - AI 驱动的需求分析与任务分解
  * - 智能依赖关系推理
@@ -26,30 +26,39 @@ export class Planner {
       max_total_tasks: 20,
       token_budget: 30000,
       ...config,
-      ...configOverrides
+      ...configOverrides,
     };
     this.projectRoot = this.config.project_root || process.cwd();
 
     this.dispatcher = new AgentDispatcher({
       ...this.config.dispatcher,
       ...(this.config.agents?.['native-reviewer'] || {}),
-      ...(this.config.agents?.['native-coder'] || {})
+      ...(this.config.agents?.['native-coder'] || {}),
     });
-    this.dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
-      ...this.config.agents?.['native-coder'],
-      ...configOverrides
-    }));
-    this.dispatcher.registerAgent('minimax-mcp', new MinimaxMCPAdapter({
-      ...this.config.agents?.['minimax-mcp'],
-      ...configOverrides
-    }));
-    this.dispatcher.registerAgent('asset-scout', new AssetScoutAdapter({
-      ...this.config.agents?.['asset-scout'],
-      ...configOverrides
-    }));
+    this.dispatcher.registerAgent(
+      'native-coder',
+      new NativeCoderAdapter({
+        ...this.config.agents?.['native-coder'],
+        ...configOverrides,
+      }),
+    );
+    this.dispatcher.registerAgent(
+      'minimax-mcp',
+      new MinimaxMCPAdapter({
+        ...this.config.agents?.['minimax-mcp'],
+        ...configOverrides,
+      }),
+    );
+    this.dispatcher.registerAgent(
+      'asset-scout',
+      new AssetScoutAdapter({
+        ...this.config.agents?.['asset-scout'],
+        ...configOverrides,
+      }),
+    );
 
     this.toolbox = new UniversalToolbox({
-      workspace_root: this.projectRoot
+      workspace_root: this.projectRoot,
     });
   }
 
@@ -71,10 +80,10 @@ export class Planner {
    * 生成任务清单到 todo_write
    */
   async syncTasksToTodo(plan) {
-    const todoItems = plan.tasks.map(task => ({
+    const todoItems = plan.tasks.map((task) => ({
       content: `[${task.id}] ${task.description}`,
       status: 'pending',
-      priority: task.type === 'architect' ? 'high' : 'medium'
+      priority: task.type === 'architect' ? 'high' : 'medium',
     }));
 
     const result = await this.toolbox.execute('todo_write', { todos: todoItems });
@@ -87,13 +96,13 @@ export class Planner {
     for (const task of plan.tasks) {
       let desc = `类型: ${task.type} | 依赖: ${task.dependencies.join(', ') || '无'}`;
       if (task.subtasks && task.subtasks.length > 0) {
-        desc += `\n\n【子任务】\n${task.subtasks.map(s => '- ' + s).join('\n')}`;
+        desc += `\n\n【子任务】\n${task.subtasks.map((s) => '- ' + s).join('\n')}`;
       }
       const result = await this.toolbox.execute('task_create', {
         title: `[${task.id}] ${task.description}`,
         description: desc,
         priority: task.type === 'architect' ? 'high' : 'medium',
-        tags: [task.type, plan.project?.name || 'appmaker']
+        tags: [task.type, plan.project?.name || 'appmaker'],
       });
       if (result.success) {
         results.push({ taskId: task.id, ...result.result });
@@ -129,7 +138,9 @@ export class Planner {
    */
   async plan(requirement) {
     console.log(`[Planner] 🤖 开始 AI 深度需求分析...`);
-    console.log(`[Planner] 需求: "${requirement.substring(0, 80)}${requirement.length > 80 ? '...' : ''}"`);
+    console.log(
+      `[Planner] 需求: "${requirement.substring(0, 80)}${requirement.length > 80 ? '...' : ''}"`,
+    );
 
     let enhancedRequirement = requirement;
 
@@ -144,26 +155,27 @@ export class Planner {
           type: 'scout',
           description: requirement,
           agent: 'asset-scout',
-          context: { project_root: this.projectRoot }
+          context: { project_root: this.projectRoot },
         });
-        
+
         this._clearSpinner();
-        
+
         if (scoutResult.status === 'success' && scoutResult.output) {
-           const { theme_adapted, assets_found, advice } = scoutResult.output;
-           console.log(`[Planner] 🎨 美术总监素材获取成功！`);
-           console.log(`[Planner]   - 限定主题: ${theme_adapted}`);
-           console.log(`[Planner]   - 获取素材: ${assets_found?.length || 0} 个`);
-           
-           enhancedRequirement = `【原始需求】\n${requirement}\n\n` +
-             `【🚨最高指令：美术指导与适应性设计】\n` + 
-             `美术侦查员已经通过 Playwright MCP 工具从 Kenney.nl 获得了如下素材，你必须根据这些文件名在代码里使用它们：\n` +
-             `[ ${(assets_found || []).join(', ')} ]\n\n` +
-             `美术侦查员确认的适应主题是：${theme_adapted}\n` +
-             `对架构设计的建议：${advice}\n\n` +
-             `请你立刻自动调整游戏剧本和核心机制，使其完全“妥协”于上述取得的物理资产！如果原始需求（比如找猫）与可用素材（比如只有车）发生冲突，必须改变题目为“赛车”。绝对禁止凭空捏造未下载的素材文件名！`;
+          const { theme_adapted, assets_found, advice } = scoutResult.output;
+          console.log(`[Planner] 🎨 美术总监素材获取成功！`);
+          console.log(`[Planner]   - 限定主题: ${theme_adapted}`);
+          console.log(`[Planner]   - 获取素材: ${assets_found?.length || 0} 个`);
+
+          enhancedRequirement =
+            `【原始需求】\n${requirement}\n\n` +
+            `【🚨最高指令：美术指导与适应性设计】\n` +
+            `美术侦查员已经通过 Playwright MCP 工具从 Kenney.nl 获得了如下素材，你必须根据这些文件名在代码里使用它们：\n` +
+            `[ ${(assets_found || []).join(', ')} ]\n\n` +
+            `美术侦查员确认的适应主题是：${theme_adapted}\n` +
+            `对架构设计的建议：${advice}\n\n` +
+            `请你立刻自动调整游戏剧本和核心机制，使其完全“妥协”于上述取得的物理资产！如果原始需求（比如找猫）与可用素材（比如只有车）发生冲突，必须改变题目为“赛车”。绝对禁止凭空捏造未下载的素材文件名！`;
         } else {
-           console.log(`[Planner] ⚠️ 美术总监未获取到合适素材，回退到原计划。`);
+          console.log(`[Planner] ⚠️ 美术总监未获取到合适素材，回退到原计划。`);
         }
       } catch (err) {
         this._clearSpinner();
@@ -176,7 +188,7 @@ export class Planner {
       if (this.config.globalBus) {
         this.config.globalBus.emit('think:start', { requirement });
       }
-      
+
       const thinker = new MultiAgentThinker({ verbose: true });
       const thought = await thinker.think(requirement, (msg) => {
         if (this.config.globalBus) {
@@ -202,21 +214,26 @@ export class Planner {
       }
 
       const enhancedPrompt = this._buildPlanningPrompt(enhancedRequirement);
-      
+
       this._showSpinner(Date.now(), 'AI 生成执行计划清单中...');
 
       const plannerAgentName = this.config.planner_agent || 'architect';
 
       try {
         let content = '';
-        
+
         if (plannerAgentName === 'native-coder' || plannerAgentName === 'architect') {
           // Bypass NativeCoder for raw planning to avoid tool_call constraint errors.
           const thinker = new MultiAgentThinker({ verbose: false });
-          const agentResultStr = await thinker._callAgent('Architect', '你是一个资深软件架构师。请只输出合法的 JSON，不要输出其他废话，无需 tool_calls 格式。', enhancedPrompt, 0.4);
-          
+          const agentResultStr = await thinker._callAgent(
+            'Architect',
+            '你是一个资深软件架构师。请只输出合法的 JSON，不要输出其他废话，无需 tool_calls 格式。',
+            enhancedPrompt,
+            0.4,
+          );
+
           this._clearSpinner();
-          
+
           if (process.env.PLANNER_DEBUG) {
             console.log('\n[Planner] 📋 AI 返回内容:');
             console.log(agentResultStr.substring(0, 1500));
@@ -225,54 +242,57 @@ export class Planner {
           content = this._extractJSON(agentResultStr);
         } else {
           // Custom planning agent (e.g. minimax-mcp)
-          const retryContext = currentAttempt > 1 
-            ? `\n\n【System Instruction: It is currently attempt ${currentAttempt}. Your previous answer resulted in 0 tasks. PLEASE DOUBLE CHECK your formatting and ensure you provide at least 1 actionable task. Random Timestamp: ${Date.now()}】` 
-            : '';
-            
+          const retryContext =
+            currentAttempt > 1
+              ? `\n\n【System Instruction: It is currently attempt ${currentAttempt}. Your previous answer resulted in 0 tasks. PLEASE DOUBLE CHECK your formatting and ensure you provide at least 1 actionable task. Random Timestamp: ${Date.now()}】`
+              : '';
+
           const agentResult = await this.dispatcher.dispatch({
             id: 'plan_analysis',
             type: 'analysis',
             description: enhancedRequirement + retryContext,
             agent: plannerAgentName,
-            context: { 
+            context: {
               project_root: this.projectRoot,
               requirement: enhancedRequirement,
               planning_config: {
                 max_tasks: this.config.max_total_tasks,
                 max_per_milestone: this.config.max_tasks_per_milestone,
-                token_budget: this.config.token_budget
-              }
-            }
+                token_budget: this.config.token_budget,
+              },
+            },
           });
-          
+
           this._clearSpinner();
           content = this._extractJSON(
             agentResult.output?.raw_output ||
-            agentResult.output?.summary ||
-            agentResult.output?.review_report ||
-            agentResult.result ||
-            String(agentResult)
+              agentResult.output?.summary ||
+              agentResult.output?.review_report ||
+              agentResult.result ||
+              String(agentResult),
           );
         }
 
         const parsedPlan = JSON.parse(content);
         const finalizedPlan = this._finalizePlan(parsedPlan, requirement);
-        
+
         // ================= 失败检测逻辑 =================
         if (!finalizedPlan.tasks || finalizedPlan.tasks.length === 0) {
           throw new Error('AI 生成的计划为空 (0 个任务)，可能未理解需求');
         }
-        
+
         console.log(`[Planner] ✅ 计划生成成功`);
-        console.log(`[Planner] 📋 任务数: ${finalizedPlan.tasks.length} | 里程碑: ${finalizedPlan.milestones.length}`);
+        console.log(
+          `[Planner] 📋 任务数: ${finalizedPlan.tasks.length} | 里程碑: ${finalizedPlan.milestones.length}`,
+        );
         console.log(`[Planner] ⏱️ 预估耗时: ${finalizedPlan.metadata.total_minutes_estimate} 分钟`);
-        
+
         return finalizedPlan;
       } catch (e) {
         this._clearSpinner();
-        
+
         console.log(`[Planner] ⚠️ 第 ${currentAttempt} 次尝试生成失败: ${e.message}`);
-        
+
         if (process.env.DEBUG || process.env.PLANNER_DEBUG) {
           console.log('[Planner] 📋 调试信息:');
         }
@@ -357,7 +377,7 @@ ${requirement}
   _showSpinner(startTime, message) {
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
-    
+
     this._spinnerInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       const frame = frames[frameIndex % frames.length];
@@ -388,12 +408,13 @@ ${requirement}
     }
 
     // Capture <think> block and emit to telemetry before stripping
-    const thinkMatch = typeof output === 'string' ? output.match(/<think>([\s\S]*?)<\/think>/i) : null;
+    const thinkMatch =
+      typeof output === 'string' ? output.match(/<think>([\s\S]*?)<\/think>/i) : null;
     if (thinkMatch && this.config && this.config.globalBus) {
-      this.config.globalBus.emit('agent:action', { 
-        agent: 'planner', 
-        type: 'think', 
-        content: thinkMatch[1].trim()
+      this.config.globalBus.emit('agent:action', {
+        agent: 'planner',
+        type: 'think',
+        content: thinkMatch[1].trim(),
       });
     }
 
@@ -438,12 +459,16 @@ ${requirement}
           // Fallback to finding matched brackets logic
           const braceCount = (candidate.match(/[{}]/g) || []).length;
           if (braceCount > 2) {
-            let depth = 0, validEnd = -1;
+            let depth = 0,
+              validEnd = -1;
             for (let i = 0; i < candidate.length; i++) {
               if (candidate[i] === '{') depth++;
               else if (candidate[i] === '}') {
                 depth--;
-                if (depth === 0) { validEnd = i; break; }
+                if (depth === 0) {
+                  validEnd = i;
+                  break;
+                }
               }
             }
             if (validEnd > 0) {
@@ -452,7 +477,9 @@ ${requirement}
                 const repaired = jsonrepair(trimmed);
                 JSON.parse(repaired);
                 return repaired;
-              } catch { /* ignore */ }
+              } catch {
+                /* ignore */
+              }
             }
           }
         }
@@ -461,10 +488,12 @@ ${requirement}
 
     // 3. Fallback: 尝试最后整体修复
     try {
-        const repaired = jsonrepair(output);
-        JSON.parse(repaired);
-        return repaired;
-    } catch { }
+      const repaired = jsonrepair(output);
+      JSON.parse(repaired);
+      return repaired;
+    } catch (_) {
+      /* ignore repair errors */
+    }
 
     if (process.env.PLANNER_DEBUG) {
       console.log('[Planner] _extractJSON: 所有解析方法都失败，返回原始字符串');
@@ -475,7 +504,7 @@ ${requirement}
 
   _finalizePlan(planObj, requirement) {
     const planId = `plan_${Date.now()}`;
-    
+
     const validatedPlan = {
       plan_id: planId,
       created_at: new Date().toISOString(),
@@ -486,13 +515,19 @@ ${requirement}
       milestones: this._validateMilestones(planObj.milestones || []),
       metadata: {
         total_tasks: planObj.tasks?.length || 0,
-        estimated_tokens: (planObj.tasks || []).reduce((sum, t) => sum + (t.estimated_tokens || 2000), 0),
-        total_minutes_estimate: (planObj.tasks || []).reduce((sum, t) => sum + (t.estimated_minutes || 10), 0)
-      }
+        estimated_tokens: (planObj.tasks || []).reduce(
+          (sum, t) => sum + (t.estimated_tokens || 2000),
+          0,
+        ),
+        total_minutes_estimate: (planObj.tasks || []).reduce(
+          (sum, t) => sum + (t.estimated_minutes || 10),
+          0,
+        ),
+      },
     };
 
     this._ensureTaskDependencies(validatedPlan);
-    
+
     return validatedPlan;
   }
 
@@ -506,7 +541,7 @@ ${requirement}
     }
     return {
       name: project.name || 'unknownProject',
-      description: project.description || ''
+      description: project.description || '',
     };
   }
 
@@ -516,7 +551,7 @@ ${requirement}
    */
   _validateFeatures(features) {
     if (!Array.isArray(features)) return [];
-    return features.filter(f => typeof f === 'string' && f.length > 0).slice(0, 10);
+    return features.filter((f) => typeof f === 'string' && f.length > 0).slice(0, 10);
   }
 
   /**
@@ -525,7 +560,7 @@ ${requirement}
    */
   _normalizeTasks(tasks) {
     const validTypes = ['architect', 'create', 'modify', 'test', 'integrate', 'deploy', 'docs'];
-    
+
     return tasks.map((task, index) => ({
       id: task.id || `t${index + 1}`,
       description: task.description || `任务 ${index + 1}`,
@@ -534,7 +569,7 @@ ${requirement}
       agent: task.agent || 'native-coder',
       estimated_tokens: task.estimated_tokens || 2000,
       estimated_minutes: task.estimated_minutes || 10,
-      files: Array.isArray(task.files) ? task.files : []
+      files: Array.isArray(task.files) ? task.files : [],
     }));
   }
 
@@ -547,7 +582,7 @@ ${requirement}
       id: ms.id || `m${index + 1}`,
       name: ms.name || `里程碑 ${index + 1}`,
       tasks: Array.isArray(ms.tasks) ? ms.tasks : [],
-      deliverables: Array.isArray(ms.deliverables) ? ms.deliverables : []
+      deliverables: Array.isArray(ms.deliverables) ? ms.deliverables : [],
     }));
   }
 
@@ -556,20 +591,20 @@ ${requirement}
    * @private
    */
   _ensureTaskDependencies(plan) {
-    const taskIds = new Set(plan.tasks.map(t => t.id));
-    
+    const taskIds = new Set(plan.tasks.map((t) => t.id));
+
     for (const task of plan.tasks) {
-      task.dependencies = task.dependencies.filter(depId => taskIds.has(depId));
+      task.dependencies = task.dependencies.filter((depId) => taskIds.has(depId));
     }
 
     for (const milestone of plan.milestones) {
-      milestone.tasks = milestone.tasks.filter(taskId => taskIds.has(taskId));
+      milestone.tasks = milestone.tasks.filter((taskId) => taskIds.has(taskId));
     }
   }
 
   _generateFallbackPlan(requirement) {
     console.log('[Planner] 🔧 使用规则分析引擎...');
-    
+
     const analysis = this._analyze(requirement);
     const tasks = this._decompose(analysis);
     const milestones = this._createMilestones(tasks);
@@ -585,15 +620,15 @@ ${requirement}
       metadata: {
         total_tasks: tasks.length,
         estimated_tokens: tasks.reduce((sum, t) => sum + (t.estimated_tokens || 2000), 0),
-        total_minutes_estimate: tasks.reduce((sum, t) => sum + (t.estimated_minutes || 10), 0)
-      }
+        total_minutes_estimate: tasks.reduce((sum, t) => sum + (t.estimated_minutes || 10), 0),
+      },
     };
 
     console.log(`[Planner] 📋 规则分析完成:`);
     console.log(`[Planner]   - 项目类型: ${analysis.type}`);
     console.log(`[Planner]   - 检测到特性: ${analysis.features.join(', ') || '无'}`);
     console.log(`[Planner]   - 生成任务: ${tasks.length} 个`);
-    
+
     return plan;
   }
 
@@ -625,7 +660,7 @@ ${requirement}
       migration: /迁移|migrate|搬迁/i,
       chat: /聊天|chat|即时通讯|im/i,
       video: /视频|video|直播|streaming/i,
-      mobile: /小程序|miniprogram|微信|app|移动端/i
+      mobile: /小程序|miniprogram|微信|app|移动端/i,
     };
 
     for (const [type, pattern] of Object.entries(typePatterns)) {
@@ -649,7 +684,7 @@ ${requirement}
       migration: 'migrateProject',
       chat: 'chatApp',
       video: 'videoPlatform',
-      mobile: 'mobileApp'
+      mobile: 'mobileApp',
     };
 
     if (type !== 'general' && typeNameMap[type]) {
@@ -664,16 +699,16 @@ ${requirement}
    */
   _extractFeatures(lower) {
     const featureKeywords = {
-      '用户认证': /用户|登录|注册|login|register|signup|signin|auth/i,
-      '内容管理': /文章|内容|post|article|内容管理/i,
-      '评论功能': /评论|comment|feedback|留言/i,
-      '支付功能': /支付|pay|payment|购买|订单/i,
-      '搜索功能': /搜索|search|查询|find/i,
-      '权限管理': /权限|role|permission|admin|授权/i,
-      '消息通知': /消息|通知|notification|msg|email|短信/i,
-      '文件上传': /上传|upload|文件|file|图片|img|avatar/i,
-      '数据统计': /统计|analytics|dashboard|图表|chart|数据/i,
-      '社交功能': /关注|follow|粉丝|friends|社交|分享|share/i
+      用户认证: /用户|登录|注册|login|register|signup|signin|auth/i,
+      内容管理: /文章|内容|post|article|内容管理/i,
+      评论功能: /评论|comment|feedback|留言/i,
+      支付功能: /支付|pay|payment|购买|订单/i,
+      搜索功能: /搜索|search|查询|find/i,
+      权限管理: /权限|role|permission|admin|授权/i,
+      消息通知: /消息|通知|notification|msg|email|短信/i,
+      文件上传: /上传|upload|文件|file|图片|img|avatar/i,
+      数据统计: /统计|analytics|dashboard|图表|chart|数据/i,
+      社交功能: /关注|follow|粉丝|friends|社交|分享|share/i,
     };
 
     const features = [];
@@ -697,7 +732,7 @@ ${requirement}
       dependencies: [],
       agent: 'native-coder',
       estimated_tokens: 2000,
-      estimated_minutes: 10
+      estimated_minutes: 10,
     });
 
     tasks.push({
@@ -707,7 +742,7 @@ ${requirement}
       dependencies: [`t${taskId - 2}`],
       agent: 'native-coder',
       estimated_tokens: 3000,
-      estimated_minutes: 15
+      estimated_minutes: 15,
     });
 
     const featureTaskIds = [];
@@ -721,7 +756,7 @@ ${requirement}
         dependencies: [`t${taskId - 2}`],
         agent: 'native-coder',
         estimated_tokens: 2500,
-        estimated_minutes: 12
+        estimated_minutes: 12,
       });
     }
 
@@ -732,7 +767,7 @@ ${requirement}
       dependencies: featureTaskIds,
       agent: 'native-coder',
       estimated_tokens: 2000,
-      estimated_minutes: 10
+      estimated_minutes: 10,
     });
 
     tasks.push({
@@ -742,7 +777,7 @@ ${requirement}
       dependencies: [`t${taskId - 2}`],
       agent: 'native-coder',
       estimated_tokens: 1500,
-      estimated_minutes: 8
+      estimated_minutes: 8,
     });
 
     tasks.push({
@@ -752,7 +787,7 @@ ${requirement}
       dependencies: [`t${taskId - 2}`],
       agent: 'native-coder',
       estimated_tokens: 1000,
-      estimated_minutes: 5
+      estimated_minutes: 5,
     });
 
     return tasks;
@@ -763,12 +798,12 @@ ${requirement}
       { id: 'm1', name: '基础框架搭建', tasks: [], phase: 1 },
       { id: 'm2', name: '核心功能开发', tasks: [], phase: 2 },
       { id: 'm3', name: '模块集成测试', tasks: [], phase: 3 },
-      { id: 'm4', name: '部署与上线', tasks: [], phase: 4 }
+      { id: 'm4', name: '部署与上线', tasks: [], phase: 4 },
     ];
 
     for (const task of tasks) {
       const taskNum = parseInt(task.id.replace('t', ''));
-      
+
       if (taskNum <= 2) {
         milestones[0].tasks.push(task.id);
       } else if (task.type === 'integrate') {
@@ -780,12 +815,12 @@ ${requirement}
       }
     }
 
-    return milestones.filter(m => m.tasks.length > 0);
+    return milestones.filter((m) => m.tasks.length > 0);
   }
 
   _generateTimestampFilename() {
     const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
+    const pad = (n) => String(n).padStart(2, '0');
     return `plan_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
   }
 

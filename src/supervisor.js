@@ -1,6 +1,6 @@
 /**
  * Supervisor - 执行监督与风险管理
- * 
+ *
  * 核心职责：
  * - 实时监控任务执行进度
  * - 收集和统计各项指标
@@ -19,17 +19,17 @@ export class Supervisor {
     this.engine = engine;
     this.logger = new Logger(config.logger);
     this.corrector = new SelfCorrector(engine);
-    
+
     this.toolbox = new UniversalToolbox({
-      workspace_root: config.workspace_root || process.cwd()
+      workspace_root: config.workspace_root || process.cwd(),
     });
-    
+
     this.config = {
       maxTokens: 100000,
       maxErrors: 5,
       maxReviewCycles: 3,
       riskCheckInterval: 10000,
-      ...config
+      ...config,
     };
 
     this.metrics = {
@@ -38,7 +38,7 @@ export class Supervisor {
       errors: [],
       corrections: [],
       startTime: Date.now(),
-      lastRiskCheck: Date.now()
+      lastRiskCheck: Date.now(),
     };
 
     this.riskLevel = 'LOW';
@@ -90,7 +90,7 @@ export class Supervisor {
   async updateTaskStatus(taskId, status) {
     const result = await this.toolbox.execute('task_update', {
       task_id: taskId,
-      status
+      status,
     });
     return result;
   }
@@ -109,7 +109,7 @@ export class Supervisor {
     return this.toolbox.execute('send_message', {
       agent_id: agentId,
       message,
-      priority
+      priority,
     });
   }
 
@@ -119,9 +119,11 @@ export class Supervisor {
       status: 'running',
       type: task.type,
       dependencies: task.dependencies || [],
-      agent: task.agent
+      agent: task.agent,
     };
-    this.logger.info('execution', `task_${task.id}.log`, `🔄 Task ${task.id} started`, { type: task.type });
+    this.logger.info('execution', `task_${task.id}.log`, `🔄 Task ${task.id} started`, {
+      type: task.type,
+    });
     this._emitPeriodicReport();
   }
 
@@ -135,14 +137,19 @@ export class Supervisor {
 
     if (result.status === 'done') {
       t.status = 'done';
-      this.logger.info('execution', `task_${task.id}.log`, `✅ Task ${task.id} finished`, { 
-        duration: `${Math.round(t.duration / 1000)}s`, 
+      this.logger.info('execution', `task_${task.id}.log`, `✅ Task ${task.id} finished`, {
+        duration: `${Math.round(t.duration / 1000)}s`,
         score: result.score,
-        cycles: result.cycles
+        cycles: result.cycles,
       });
     } else if (result.status === 'needs_human') {
       t.status = 'needs_human';
-      this.logger.warn('execution', `task_${task.id}.log`, `⚠️ Task ${task.id} needs human intervention`, { score: result.score });
+      this.logger.warn(
+        'execution',
+        `task_${task.id}.log`,
+        `⚠️ Task ${task.id} needs human intervention`,
+        { score: result.score },
+      );
     }
 
     const codeTokens = result.code_result?.metrics?.tokens_used || 0;
@@ -160,13 +167,13 @@ export class Supervisor {
       task: task.id,
       phase: result.phase,
       error: result.error,
-      time: Date.now()
+      time: Date.now(),
     };
     this.metrics.errors.push(errorEntry);
 
-    this.logger.error('quality', `error_${task.id}.log`, `❌ Task error`, { 
-      error: result.error, 
-      phase: result.phase 
+    this.logger.error('quality', `error_${task.id}.log`, `❌ Task error`, {
+      error: result.error,
+      phase: result.phase,
     });
 
     this.triggerCorrection('error', { task, error: result.error, phase: result.phase });
@@ -179,36 +186,61 @@ export class Supervisor {
     this.metrics.tokens.total += tokens;
 
     if (result.output?.score < REVIEW_THRESHOLD) {
-      this.logger.warn('quality', `review_${task.id}.log`, `⚠️ Low review score for ${task.id} (${result.output?.score} < ${REVIEW_THRESHOLD})`, { score: result.output?.score });
-      this.triggerCorrection('quality_low', { task, score: result.output?.score, issues: result.output?.issues || [] });
+      this.logger.warn(
+        'quality',
+        `review_${task.id}.log`,
+        `⚠️ Low review score for ${task.id} (${result.output?.score} < ${REVIEW_THRESHOLD})`,
+        { score: result.output?.score },
+      );
+      this.triggerCorrection('quality_low', {
+        task,
+        score: result.output?.score,
+        issues: result.output?.issues || [],
+      });
     }
   }
 
   _onMilestoneStart({ milestone }) {
-    this.logger.info('execution', 'supervisor.log', `🏁 Milestone "${milestone.name}" started (${milestone.tasks?.length || 0} tasks)`);
+    this.logger.info(
+      'execution',
+      'supervisor.log',
+      `🏁 Milestone "${milestone.name}" started (${milestone.tasks?.length || 0} tasks)`,
+    );
   }
 
   _onMilestoneDone({ milestone }) {
     const tasks = this.metrics.tasks;
     const milestoneTaskIds = milestone.tasks || [];
-    const completed = milestoneTaskIds.filter(id => tasks[id]?.status === 'done').length;
-    const failed = milestoneTaskIds.filter(id => tasks[id]?.status === 'failed').length;
-    
-    this.logger.info('execution', 'supervisor.log', `✅ Milestone "${milestone.name}" complete! (${completed}/${milestoneTaskIds.length} tasks done, ${failed} failed)`);
+    const completed = milestoneTaskIds.filter((id) => tasks[id]?.status === 'done').length;
+    const failed = milestoneTaskIds.filter((id) => tasks[id]?.status === 'failed').length;
+
+    this.logger.info(
+      'execution',
+      'supervisor.log',
+      `✅ Milestone "${milestone.name}" complete! (${completed}/${milestoneTaskIds.length} tasks done, ${failed} failed)`,
+    );
     this.assessRisk();
   }
 
   _onPlanDone({ plan, summary }) {
     this.logger.info('execution', 'supervisor.log', `🎉 Plan execution complete!`);
     this.logger.info('execution', 'supervisor.log', `📊 Summary:`, summary);
-    this.logger.info('execution', 'supervisor.log', `💰 Total tokens: ${this.metrics.tokens.total}`);
-    
+    this.logger.info(
+      'execution',
+      'supervisor.log',
+      `💰 Total tokens: ${this.metrics.tokens.total}`,
+    );
+
     this.stop();
     this._emitFinalReport(summary);
   }
 
   _onBudgetExceeded({ usage, budget }) {
-    this.logger.error('execution', 'supervisor.log', `💸 Token budget exceeded! (${usage.total}/${budget})`);
+    this.logger.error(
+      'execution',
+      'supervisor.log',
+      `💸 Token budget exceeded! (${usage.total}/${budget})`,
+    );
     this.riskLevel = 'CRITICAL';
   }
 
@@ -218,8 +250,8 @@ export class Supervisor {
   assessRisk() {
     const { tokens, errors, tasks } = this.metrics;
     const totalTasks = Object.keys(tasks).length;
-    const completedTasks = Object.values(tasks).filter(t => t.status === 'done').length;
-    
+    const completedTasks = Object.values(tasks).filter((t) => t.status === 'done').length;
+
     const tokenRatio = tokens.total / this.config.maxTokens;
     const errorRatio = errors.length / this.config.maxErrors;
     const completionRate = totalTasks > 0 ? completedTasks / totalTasks : 0;
@@ -229,20 +261,39 @@ export class Supervisor {
     if (tokenRatio > 0.95 || errorRatio > 1.0) {
       this.riskLevel = 'CRITICAL';
       this.engine.halt = true;
-      if (this.riskLevel !== previousRisk) this.logger.error('execution', 'supervisor.log', '🚨 CRITICAL risk detected - execution halted');
+      if (this.riskLevel !== previousRisk)
+        this.logger.error(
+          'execution',
+          'supervisor.log',
+          '🚨 CRITICAL risk detected - execution halted',
+        );
     } else if (tokenRatio > 0.8 || errorRatio > 0.6) {
       this.riskLevel = 'HIGH';
-      if (this.riskLevel !== previousRisk) this.logger.warn('execution', 'supervisor.log', `⚠️ HIGH risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
+      if (this.riskLevel !== previousRisk)
+        this.logger.warn(
+          'execution',
+          'supervisor.log',
+          `⚠️ HIGH risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`,
+        );
     } else if (tokenRatio > 0.5 || errorRatio > 0.3) {
       this.riskLevel = 'MEDIUM';
-      if (this.riskLevel !== previousRisk) this.logger.info('execution', 'supervisor.log', `🟡 MEDIUM risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
+      if (this.riskLevel !== previousRisk)
+        this.logger.info(
+          'execution',
+          'supervisor.log',
+          `🟡 MEDIUM risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`,
+        );
     } else {
       this.riskLevel = 'LOW';
     }
 
     if (errors.length > this.config.maxErrors) {
       this.engine.halt = true;
-      this.logger.error('execution', 'supervisor.log', `🚨 Error threshold exceeded (${errors.length}/${this.config.maxErrors}) - execution halted`);
+      this.logger.error(
+        'execution',
+        'supervisor.log',
+        `🚨 Error threshold exceeded (${errors.length}/${this.config.maxErrors}) - execution halted`,
+      );
     }
 
     return this.riskLevel;
@@ -254,7 +305,7 @@ export class Supervisor {
    */
   _periodicRiskCheck() {
     this.metrics.lastRiskCheck = Date.now();
-    
+
     if (this.engine.aborted) {
       this.riskLevel = 'ABORTED';
       this.stop();
@@ -263,7 +314,11 @@ export class Supervisor {
 
     const elapsed = Date.now() - this.metrics.startTime;
     if (elapsed > 3600000) {
-      this.logger.warn('execution', 'supervisor.log', `⏰ Execution has been running for ${Math.round(elapsed / 60000)} minutes`);
+      this.logger.warn(
+        'execution',
+        'supervisor.log',
+        `⏰ Execution has been running for ${Math.round(elapsed / 60000)} minutes`,
+      );
     }
 
     this.assessRisk();
@@ -274,9 +329,14 @@ export class Supervisor {
    */
   async triggerCorrection(reason, context) {
     const correctionId = `corr_${Date.now()}`;
-    
-    this.logger.info('corrections', `${correctionId}.md`, `🔧 Triggering correction for ${context.task?.id}`, { reason });
-    
+
+    this.logger.info(
+      'corrections',
+      `${correctionId}.md`,
+      `🔧 Triggering correction for ${context.task?.id}`,
+      { reason },
+    );
+
     try {
       const result = await this.corrector.correct(reason, context);
       this.metrics.corrections.push({
@@ -284,16 +344,24 @@ export class Supervisor {
         reason,
         taskId: context.task?.id,
         result,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
-      
+
       if (!result.success && result.action === 'human_intervention') {
-        this.logger.error('corrections', 'supervisor.log', `⚠️ Correction failed - human intervention required for task ${context.task?.id}`);
+        this.logger.error(
+          'corrections',
+          'supervisor.log',
+          `⚠️ Correction failed - human intervention required for task ${context.task?.id}`,
+        );
       }
-      
+
       return result;
     } catch (error) {
-      this.logger.error('corrections', 'supervisor.log', `❌ Correction process error: ${error.message}`);
+      this.logger.error(
+        'corrections',
+        'supervisor.log',
+        `❌ Correction process error: ${error.message}`,
+      );
       return { success: false, error: error.message };
     }
   }
@@ -305,21 +373,23 @@ export class Supervisor {
   _emitPeriodicReport() {
     const now = Date.now();
     if (now - this.lastReportTime < this.reportInterval) return;
-    
+
     this.lastReportTime = now;
     const { tasks, tokens, errors } = this.metrics;
     const totalTasks = Object.keys(tasks).length;
-    const completedTasks = Object.values(tasks).filter(t => t.status === 'done').length;
-    const failedTasks = Object.values(tasks).filter(t => t.status === 'failed').length;
-    
+    const completedTasks = Object.values(tasks).filter((t) => t.status === 'done').length;
+    const failedTasks = Object.values(tasks).filter((t) => t.status === 'failed').length;
+
     const riskIcon = { LOW: '🟢', MEDIUM: '🟡', HIGH: '🟠', CRITICAL: '🔴' }[this.riskLevel];
-    
+
     console.log(`\n${'='.repeat(60)}`);
     console.log(`[SUPERVISION REPORT] ${new Date().toLocaleString()}`);
     console.log(`${'='.repeat(60)}`);
     console.log(`风险等级: ${riskIcon} ${this.riskLevel}`);
     console.log(`任务进度: ${completedTasks}/${totalTasks} 完成, ${failedTasks} 失败`);
-    console.log(`Token 消耗: ${tokens.total} / ${this.config.maxTokens} (${Math.round(tokens.total / this.config.maxTokens * 100)}%)`);
+    console.log(
+      `Token 消耗: ${tokens.total} / ${this.config.maxTokens} (${Math.round((tokens.total / this.config.maxTokens) * 100)}%)`,
+    );
     console.log(`错误累积: ${errors.length} / ${this.config.maxErrors}`);
     console.log(`${'='.repeat(60)}\n`);
   }
@@ -331,7 +401,7 @@ export class Supervisor {
   _emitFinalReport(summary) {
     const { tokens, corrections } = this.metrics;
     const duration = Date.now() - this.metrics.startTime;
-    
+
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`[FINAL REPORT] 执行完成`);
     console.log(`${'═'.repeat(60)}`);
@@ -357,7 +427,7 @@ export class Supervisor {
     return {
       ...this.metrics,
       riskLevel: this.riskLevel,
-      config: this.config
+      config: this.config,
     };
   }
 

@@ -24,7 +24,7 @@ export const DAEMON_STATE = {
   PAUSED: 'paused',
   SUSPENDED: 'suspended',
   TERMINATED: 'terminated',
-  RECOVERING: 'recovering'
+  RECOVERING: 'recovering',
 };
 
 export class DaemonCore extends EventEmitter {
@@ -39,7 +39,7 @@ export class DaemonCore extends EventEmitter {
       recoveryEnabled: config.recoveryEnabled !== false,
       maxRetries: config.maxRetries || 3,
       autoSaveInterval: config.autoSaveInterval || 60000,
-      ...config
+      ...config,
     };
 
     this.logger = {
@@ -48,7 +48,7 @@ export class DaemonCore extends EventEmitter {
         if (process.env.DEBUG) console.log(`[DEBUG] ${msg}`, ...args);
       },
       warn: (msg, ...args) => console.warn(`[WARN] ${msg}`, ...args),
-      error: (msg, ...args) => console.error(`[ERROR] ${msg}`, ...args)
+      error: (msg, ...args) => console.error(`[ERROR] ${msg}`, ...args),
     };
 
     this.memory = null;
@@ -63,7 +63,7 @@ export class DaemonCore extends EventEmitter {
       memoryHits: 0,
       memoryMisses: 0,
       lastHeartbeat: null,
-      restartCount: 0
+      restartCount: 0,
     };
 
     this.lifecycleHooks = {
@@ -72,7 +72,7 @@ export class DaemonCore extends EventEmitter {
       beforeStop: [],
       afterStop: [],
       onError: [],
-      onRecover: []
+      onRecover: [],
     };
   }
 
@@ -81,18 +81,18 @@ export class DaemonCore extends EventEmitter {
       await fs.mkdir(this.config.dataDir, { recursive: true });
       this.memory = new MemoryStore({
         dbPath: path.join(this.config.dataDir, 'memory.db'),
-        logger: this.logger
+        logger: this.logger,
       });
       await this.memory.initialize();
 
       this.sessions = new SessionManager({
         store: this.memory,
-        logger: this.logger
+        logger: this.logger,
       });
 
       this.taskQueue = new TaskQueue({
         store: this.memory,
-        logger: this.logger
+        logger: this.logger,
       });
 
       await this.taskQueue.initialize();
@@ -126,7 +126,7 @@ export class DaemonCore extends EventEmitter {
       const manifest = await this._createManifest();
       await fs.writeFile(
         path.join(this.config.dataDir, 'daemon.manifest.json'),
-        JSON.stringify(manifest, null, 2)
+        JSON.stringify(manifest, null, 2),
       );
 
       await this._runHooks('afterStart');
@@ -220,12 +220,12 @@ export class DaemonCore extends EventEmitter {
       state: this.state,
       uptime: this.stats.uptime,
       memory: process.memoryUsage(),
-      timestamp: now
+      timestamp: now,
     };
 
     await fs.writeFile(
       path.join(this.config.dataDir, 'heartbeat.json'),
-      JSON.stringify(health, null, 2)
+      JSON.stringify(health, null, 2),
     );
 
     this.emit('heartbeat', health);
@@ -275,12 +275,12 @@ export class DaemonCore extends EventEmitter {
       state: this.state,
       startTime: this.startTime,
       stats: this.stats,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     await fs.writeFile(
       path.join(this.config.dataDir, 'state.json'),
-      JSON.stringify(state, null, 2)
+      JSON.stringify(state, null, 2),
     );
 
     if (this.memory) {
@@ -291,7 +291,10 @@ export class DaemonCore extends EventEmitter {
   async _recoverState() {
     try {
       const statePath = path.join(this.config.dataDir, 'state.json');
-      const stateExists = await fs.access(statePath).then(() => true).catch(() => false);
+      const stateExists = await fs
+        .access(statePath)
+        .then(() => true)
+        .catch(() => false);
 
       if (!stateExists) {
         this.logger.info('No previous state to recover');
@@ -305,7 +308,11 @@ export class DaemonCore extends EventEmitter {
       this.emit('recover', savedState);
 
       if (savedState.stats) {
-        this.stats = { ...this.stats, ...savedState.stats, restartCount: this.stats.restartCount + 1 };
+        this.stats = {
+          ...this.stats,
+          ...savedState.stats,
+          restartCount: this.stats.restartCount + 1,
+        };
       }
 
       if (this.taskQueue) {
@@ -331,7 +338,7 @@ export class DaemonCore extends EventEmitter {
       state: this.state,
       startTime: this.startTime || Date.now(),
       dataDir: this.config.dataDir,
-      heartbeatInterval: this.config.heartbeatInterval
+      heartbeatInterval: this.config.heartbeatInterval,
     };
   }
 
@@ -355,7 +362,7 @@ export class DaemonCore extends EventEmitter {
   async createSession(config = {}) {
     const session = await this.sessions.create({
       daemonPid: this.pid,
-      ...config
+      ...config,
     });
     this.stats.sessionsCreated++;
     this.emit('session:create', session);
@@ -375,7 +382,7 @@ export class DaemonCore extends EventEmitter {
       uptime: Date.now() - (this.startTime || Date.now()),
       stats: this.stats,
       memory: process.memoryUsage(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
 

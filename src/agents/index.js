@@ -26,22 +26,31 @@ export function createDispatcher(overrideConfig = {}) {
     ...config.dispatcher,
     ...(config.agents?.['native-reviewer'] || {}),
     ...(config.agents?.['native-coder'] || {}),
-    ...overrideConfig
+    ...overrideConfig,
   };
   const dispatcher = new AgentDispatcher(finalConfig);
 
-  dispatcher.registerAgent('native-coder', new NativeCoderAdapter({
-    ...config.agents?.['native-coder'],
-    ...overrideConfig
-  }));
-  dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
-    ...config.agents?.['native-reviewer'],
-    ...overrideConfig
-  }));
-  dispatcher.registerAgent('asset-scout', new AssetScoutAdapter({
-    ...config.agents?.['asset-scout'],
-    ...overrideConfig
-  }));
+  dispatcher.registerAgent(
+    'native-coder',
+    new NativeCoderAdapter({
+      ...config.agents?.['native-coder'],
+      ...overrideConfig,
+    }),
+  );
+  dispatcher.registerAgent(
+    'native-reviewer',
+    new NativeReviewerAdapter({
+      ...config.agents?.['native-reviewer'],
+      ...overrideConfig,
+    }),
+  );
+  dispatcher.registerAgent(
+    'asset-scout',
+    new AssetScoutAdapter({
+      ...config.agents?.['asset-scout'],
+      ...overrideConfig,
+    }),
+  );
 
   return dispatcher;
 }

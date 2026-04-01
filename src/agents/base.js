@@ -1,7 +1,7 @@
 /**
  * Agent Adapter 基类
  * 定义 Agent 调用的标准接口
- * 
+ *
  * 支持集成 UniversalToolbox，让 Agent 能够：
  * - 使用文件系统工具读写文件
  * - 执行 Bash/PowerShell 命令
@@ -20,7 +20,7 @@ export class AgentAdapter extends EventEmitter {
     this.name = config.name;
     this.type = config.type;
     this.capabilities = config.capabilities || [];
-    
+
     this._initToolbox(config);
   }
 
@@ -32,9 +32,9 @@ export class AgentAdapter extends EventEmitter {
     const toolboxConfig = {
       workspace_root: config.workspace_root || config.project_root || process.cwd(),
       timeout: config.tool_timeout || 30000,
-      max_output_size: config.max_output_size || 1024 * 1024
+      max_output_size: config.max_output_size || 1024 * 1024,
     };
-    
+
     this.toolbox = new UniversalToolbox(toolboxConfig);
     this._toolCache = new Map();
   }
@@ -53,7 +53,7 @@ export class AgentAdapter extends EventEmitter {
    * @returns {Array}
    */
   getToolsByCategory(category) {
-    return this.toolbox.getToolsMetadata().filter(t => t.category === category);
+    return this.toolbox.getToolsMetadata().filter((t) => t.category === category);
   }
 
   /**
@@ -62,10 +62,13 @@ export class AgentAdapter extends EventEmitter {
    * @returns {Array}
    */
   searchTools(query) {
-    return this.toolbox.getToolsMetadata().filter(t => 
-      t.name.toLowerCase().includes(query.toLowerCase()) ||
-      t.description.toLowerCase().includes(query.toLowerCase())
-    );
+    return this.toolbox
+      .getToolsMetadata()
+      .filter(
+        (t) =>
+          t.name.toLowerCase().includes(query.toLowerCase()) ||
+          t.description.toLowerCase().includes(query.toLowerCase()),
+      );
   }
 
   /**
@@ -76,19 +79,19 @@ export class AgentAdapter extends EventEmitter {
    */
   async executeTool(toolName, args = {}) {
     this.emit('action', { type: 'tool_call', tool: toolName, args });
-    
+
     const cacheKey = `${toolName}:${JSON.stringify(args)}`;
-    
+
     if (this._toolCache.has(cacheKey)) {
       return this._toolCache.get(cacheKey);
     }
-    
+
     const result = await this.toolbox.execute(toolName, args);
-    
+
     if (result.success) {
       this._toolCache.set(cacheKey, result);
     }
-    
+
     return result;
   }
 
@@ -121,32 +124,32 @@ export class AgentAdapter extends EventEmitter {
     const context = {
       root: projectRoot,
       files: [],
-      structure: {}
+      structure: {},
     };
 
-    const listResult = await this.executeTool('list_directory', { 
+    const listResult = await this.executeTool('list_directory', {
       dir_path: projectRoot,
-      include_hidden: false
+      include_hidden: false,
     });
 
     if (listResult.success && listResult.result.items) {
       context.structure = listResult.result;
-      context.files = listResult.result.items
-        .filter(i => i.type === 'file')
-        .map(f => f.name);
+      context.files = listResult.result.items.filter((i) => i.type === 'file').map((f) => f.name);
     }
 
-    const packageJsonResult = await this.executeTool('read_file', { 
-      file_path: 'package.json' 
+    const packageJsonResult = await this.executeTool('read_file', {
+      file_path: 'package.json',
     });
     if (packageJsonResult.success) {
       try {
         context.packageJson = JSON.parse(packageJsonResult.result.content);
-      } catch {}
+      } catch (_) {
+        /* ignore parse errors */
+      }
     }
 
-    const readmeResult = await this.executeTool('read_file', { 
-      file_path: 'README.md' 
+    const readmeResult = await this.executeTool('read_file', {
+      file_path: 'README.md',
     });
     if (readmeResult.success) {
       context.readme = readmeResult.result.content.substring(0, 500);
@@ -185,7 +188,7 @@ export class AgentAdapter extends EventEmitter {
       name: this.name,
       type: this.type,
       capabilities: this.capabilities || [],
-      tools_count: this.toolbox?.tools?.size || 0
+      tools_count: this.toolbox?.tools?.size || 0,
     };
   }
 
@@ -200,10 +203,10 @@ export class AgentAdapter extends EventEmitter {
       error: {
         type: error.name,
         message: error.message,
-        stack: error.stack
+        stack: error.stack,
       },
       agent: this.name,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -229,13 +232,13 @@ export const RESULT_FORMAT = {
     files_created: [],
     files_modified: [],
     tests_run: false,
-    summary: 'string'
+    summary: 'string',
   },
   metrics: {
     duration_ms: 0,
-    tokens_used: 0
+    tokens_used: 0,
   },
-  errors: []
+  errors: [],
 };
 
 export default AgentAdapter;
