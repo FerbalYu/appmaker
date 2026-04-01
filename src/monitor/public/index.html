@@ -9,19 +9,26 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     body {
-      background: radial-gradient(circle at top right, #1e1b4b, #020617);
+      background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #000000);
+      background-size: 400% 400%;
+      animation: gradientBG 15s ease infinite;
       color: #f8fafc;
       font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
       margin: 0;
       height: 100vh;
     }
+    @keyframes gradientBG {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
     .glass {
-      background: rgba(30, 41, 59, 0.4);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
       border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     }
     .text-glow {
       text-shadow: 0 0 10px rgba(167, 139, 250, 0.5);
@@ -105,6 +112,31 @@
       </div>
     </details>
 
+    <!-- Dynamic Wait/Retry Banner -->
+    <Transition name="list">
+      <div v-if="activeWait" class="glass shrink-0 rounded-2xl overflow-hidden shadow-2xl border-amber-500/30 bg-amber-900/20 relative">
+        <div class="absolute inset-0 bg-gradient-to-r from-amber-500/10 to-transparent pointer-events-none"></div>
+        <div class="px-5 py-4 flex items-center justify-between relative z-10">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 pulse-ring">
+              <svg class="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            </div>
+            <div>
+              <h3 class="text-amber-400 font-bold text-lg mb-0.5">Execution Suspended: Cooling Down</h3>
+              <p class="text-amber-200/80 text-sm flex gap-3"><span class="font-mono bg-amber-900/40 px-1.5 py-0.5 rounded text-amber-300">{{activeWait.error}}</span></p>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-4xl font-mono font-bold text-amber-400 text-glow">{{activeWait.timeLeft}}s</div>
+            <div class="text-xs text-amber-500/80 uppercase tracking-widest mt-1">UNTIL RETRY</div>
+          </div>
+        </div>
+        <div class="h-1 bg-amber-900/50 w-full">
+          <div class="h-full bg-amber-500 transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(245,158,11,0.5)]" :style="{ width: (activeWait.timeLeft / activeWait.totalTime) * 100 + '%' }"></div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Main Content Area -->
     <div class="flex-1 flex gap-6 min-h-0">
       
@@ -186,32 +218,58 @@
         </div>
 
         <!-- EXECUTION TELEMETRY UI -->
-        <div v-else-if="phase === 'execution'" class="flex-1 overflow-y-auto p-6 relative space-y-4" id="telemetry-container">
-          <TransitionGroup name="list">
-            <div v-for="action in telemetryActions" :key="action.id" class="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-xl backdrop-blur">
-               <div class="text-xs text-slate-400 mb-2 uppercase font-mono tracking-wider flex justify-between">
-                  <span>
-                    <b :class="action.agent === 'native-coder' ? 'text-indigo-400' : 'text-amber-400'">[{{action.agent}}]</b> 
-                    {{action.type === 'think' ? 'THINKING' : 'EXECUTION'}}
-                  </span>
-                  <span class="text-slate-500">{{action.time}}</span>
-               </div>
-               
-               <div v-if="action.type === 'think'" class="mt-2">
-                 <details class="bg-slate-800/80 rounded border border-slate-700 overflow-hidden think-block">
-                   <summary class="px-3 py-1.5 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 flex items-center select-none">大脑思考过程 (展开/折叠)</summary>
-                   <div class="p-3 text-slate-300 text-sm border-t border-slate-700/50 prose prose-invert prose-sm max-w-none whitespace-pre-wrap">{{action.content}}</div>
-                 </details>
-               </div>
-               <div v-else class="font-mono text-sm text-slate-200 flex gap-2">
-                 <span class="text-emerald-400">{{action.tool}}</span> 
-                 <span class="text-sky-300 truncate">{{action.target}}</span>
-               </div>
+        <div v-else-if="phase === 'execution'" class="flex-1 overflow-y-auto p-6 relative" id="telemetry-container">
+          <div class="absolute left-10 top-6 bottom-6 w-0.5 bg-indigo-500/20 rounded-full hidden sm:block"></div>
+          
+          <div class="space-y-6 relative h-full custom-scrollbar pb-10">
+            <TransitionGroup name="list">
+              <div v-for="action in telemetryActions" :key="action.id" class="relative flex items-start gap-4">
+                 
+                 <!-- Timeline Element -->
+                 <div class="relative hidden sm:flex shrink-0 w-8 h-8 rounded-full border border-indigo-400/50 items-center justify-center bg-slate-900 shadow-[0_0_15px_rgba(99,102,241,0.3)] z-10"
+                      :class="action.agent === 'native-coder' ? 'border-indigo-400/50 shadow-indigo-500/30' : 'border-amber-400/50 shadow-amber-500/30'">
+                    <svg v-if="action.agent === 'native-coder'" class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                    <svg v-else class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                 </div>
+  
+                 <div class="bg-indigo-950/20 border border-indigo-500/20 hover:border-indigo-400/40 hover:bg-indigo-900/30 transition-all rounded-xl p-4 shadow-lg backdrop-blur flex-1">
+                    <div class="text-[10px] text-slate-400 mb-3 uppercase font-semibold tracking-widest flex justify-between items-center border-b border-indigo-500/10 pb-2">
+                       <span class="flex items-center gap-2">
+                         <span class="px-2 py-0.5 rounded-full" :class="action.agent === 'native-coder' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-amber-500/20 text-amber-300'">
+                           {{action.agent}}
+                         </span>
+                         <span class="text-slate-500 mx-1">•</span>
+                         <span :class="action.type === 'think' ? 'text-fuchsia-400' : 'text-emerald-400'">{{action.type === 'think' ? 'INTERNAL THOUGHT' : 'TOOL EXECUTION'}}</span>
+                       </span>
+                       <span class="text-slate-500 flex items-center gap-1 font-mono">
+                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                         {{action.time}}
+                       </span>
+                    </div>
+                    
+                    <div v-if="action.type === 'think'" class="mt-2">
+                      <details class="bg-slate-900/50 rounded border border-slate-700 overflow-hidden think-block transition-all">
+                        <summary class="px-3 py-2 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 flex items-center select-none bg-slate-800/30">
+                          🧠 大脑思考过程 (点击展开)
+                        </summary>
+                        <div class="p-3 text-slate-300 text-sm border-t border-slate-700/50 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">{{action.content}}</div>
+                      </details>
+                    </div>
+                    <div v-else class="font-mono text-sm flex items-center gap-3">
+                      <span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded shadow-sm shrink-0 whitespace-nowrap">
+                        >_ {{action.tool}}
+                      </span> 
+                      <span class="text-slate-300 text-[13px] break-all max-h-20 overflow-y-auto custom-scrollbar">{{action.target}}</span>
+                    </div>
+                 </div>
+              </div>
+            </TransitionGroup>
+            
+            <!-- Skeleton waiting indicator if empty -->
+            <div v-if="telemetryActions.length === 0" class="h-full flex flex-col items-center justify-center text-slate-500 mt-20">
+              <svg class="w-16 h-16 mb-4 opacity-20 text-indigo-300 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+              <div class="tracking-widest uppercase text-xs font-semibold">Waiting for Agent Action...</div>
             </div>
-          </TransitionGroup>
-          <div v-if="telemetryActions.length === 0" class="h-full flex flex-col items-center justify-center text-slate-500">
-            <svg class="w-16 h-16 mb-4 opacity-20 text-indigo-300 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-            Waiting for Agent Action...
           </div>
         </div>
         
@@ -289,6 +347,7 @@
         
         const telemetryActions = ref([]);
         const executionSummary = ref(null);
+        const activeWait = ref(null);
 
         const logs = ref([]);
         let logCounter = 0;
@@ -365,6 +424,7 @@
             addLog('milestone', `🚀 Milestone started: ${data.milestone.name}`);
           } 
           else if (event === 'agent:action') {
+            if (activeWait.value) activeWait.value = null;
             const actionTime = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
             telemetryActions.value.unshift({
                id: Date.now() + Math.random(),
@@ -396,6 +456,15 @@
             activeTasksMap.value.delete(taskId);
             failedTasks.value.add(taskId);
             addLog('error', `Task [${taskId}] failed!`);
+          }
+          else if (event === 'task:retry_wait') {
+            addLog('error', `Execution suspended: waiting ${Math.round(data.delay_ms/1000)}s before retry.`);
+            activeWait.value = {
+              error: data.error,
+              totalTime: Math.round(data.delay_ms / 1000),
+              timeLeft: Math.round(data.delay_ms / 1000),
+              endTime: Date.now() + data.delay_ms
+            };
           }
           else if (event === 'execution:done') {
             phase.value = 'done';
@@ -471,10 +540,16 @@
           };
           
           timer = setInterval(() => {
-            // Vue reactivity hack to force manual deep re-renders if maps/sets don't auto update
             if (activeTasksMap.value.size >= 0) {
-               // trigger reactivity for formatTime
                tokens.value = tokens.value;
+            }
+            if (activeWait.value) {
+               const left = Math.ceil((activeWait.value.endTime - Date.now()) / 1000);
+               if (left <= 0) {
+                 activeWait.value = null;
+               } else {
+                 activeWait.value.timeLeft = left;
+               }
             }
           }, 1000);
         });
@@ -491,6 +566,7 @@
           failedTasks,
           telemetryActions,
           executionSummary,
+          activeWait,
           activeTasksArray,
           sortedLogs,
           globalStartTime,

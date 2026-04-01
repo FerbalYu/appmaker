@@ -1,0 +1,25 @@
+{
+  "extends": "./default.json",
+  "env": "production",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "logging": {
+    "level": "warn",
+    "format": "json",
+    "transports": ["file"]
+  },
+  "features": {
+    "daemonMode": true,
+    "autoFix": false,
+    "previewMode": false
+  },
+  "security": {
+    "allowedOrigins": [],
+    "rateLimit": {
+      "windowMs": 60000,
+      "maxRequests": 50
+    }
+  }
+}

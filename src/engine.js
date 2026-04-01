@@ -345,6 +345,7 @@ export class ExecutionEngine extends EventEmitter {
           id: `review_${task.id}`,
           type: 'review',
           description: `评审任务: ${task.description}`,
+          subtasks: task.subtasks || [],
           files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
           context
         });
@@ -404,6 +405,7 @@ export class ExecutionEngine extends EventEmitter {
         id: `review_${task.id}_${cycle}`,
         type: 'review',
         description: `重新评审: ${task.description}`,
+        subtasks: task.subtasks || [],
         files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
         context
       });
@@ -489,9 +491,20 @@ export class ExecutionEngine extends EventEmitter {
         
         if (this._isRetryableError(error) || isStalled) {
           if (attempt <= maxRetries) {
-            const delay = Math.pow(2, attempt - 1) * 1000;
+            let delay = Math.pow(2, attempt - 1) * 1000;
+            if (error.message && (error.message.includes('529') || error.message.includes('overloaded_error') || error.message.includes('429') || error.message.toLowerCase().includes('rate limit'))) {
+              delay = 120 * 1000; // Force 120 seconds backoff for overload/rate-limits
+            }
             const reason = isStalled ? '执行卡死发呆/超时中止' : error.message;
             this._log('WARN', `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${reason}`);
+            this.emit('task:retry_wait', {
+              task_id: taskId,
+              phase,
+              delay_ms: delay,
+              attempt,
+              max_retries: maxRetries,
+              error: reason
+            });
             await this._sleep(delay);
           } else {
             this._log('ERROR', `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败: ${error.message}`);

@@ -1,40 +1,83 @@
 # Dependencies
 node_modules/
-package-lock.json
+bower_components/
 
-# Build output
+# Build outputs
 dist/
 build/
+out/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test outputs
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
 
 # Logs
 logs/
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
 
-# Environment files
+# Environment
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
+.env.test
 
-# Editor directories
-.idea/
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
-*~
-
-# OS files
+*.~*
 .DS_Store
 Thumbs.db
 
-# Test coverage
-coverage/
-
 # Temporary files
+tmp/
+temp/
 *.tmp
 *.temp
-.cache/
-.opclog/*
-.appmaker/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Project outputs
+projects/
+test-projects/
+generated/
+
+# Plans (can be committed, but often ignored during dev)
+# plans/*.json
+# !plans/.gitkeep
+
+# Editor backup files
 *.bak
-plan_*
+*.orig
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+
+# TypeScript (if used)
+/lib/
+/dist/
+/out-tsc/
+
+# AppMaker Internal
+.appmaker/
+.playwright-mcp/
+test-scout.js

@@ -523,7 +523,7 @@ async function executePlan(plan) {
 
   await startMonitor();
 
-  const forwardEvents = ['milestone:start', 'milestone:done', 'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'agent:action'];
+  const forwardEvents = ['milestone:start', 'milestone:done', 'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'task:retry_wait', 'agent:action'];
   forwardEvents.forEach(e => engine.on(e, data => globalBus.emit(e, data)));
 
   console.log('='.repeat(50));

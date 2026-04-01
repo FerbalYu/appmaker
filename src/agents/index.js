@@ -11,6 +11,7 @@ export { AgentDispatcher, TASK_TYPE_MAPPING } from './dispatcher.js';
 import { AgentDispatcher } from './dispatcher.js';
 import { NativeCoderAdapter } from './native-coder.js';
 import { NativeReviewerAdapter } from './native-reviewer.js';
+import { AssetScoutAdapter } from './asset-scout.js';
 import { ExecutionEngine } from '../engine.js';
 import { Planner } from '../planner.js';
 import { config } from '../../config/index.js';
@@ -35,6 +36,10 @@ export function createDispatcher(overrideConfig = {}) {
   }));
   dispatcher.registerAgent('native-reviewer', new NativeReviewerAdapter({
     ...config.agents?.['native-reviewer'],
+    ...overrideConfig
+  }));
+  dispatcher.registerAgent('asset-scout', new AssetScoutAdapter({
+    ...config.agents?.['asset-scout'],
     ...overrideConfig
   }));
 

@@ -20,7 +20,7 @@ export class ProgressMonitor {
       'think:start', 'think:message', 'think:done',
       'plan:start', 'plan:done', 'plan:ready',
       'milestone:start', 'milestone:done',
-      'task:start', 'task:done', 'task:error', 'task:review', 'task:progress',
+      'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'task:retry_wait',
       'agent:action', 'execution:done'
     ];
 

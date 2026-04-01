@@ -1,0 +1,78 @@
+{
+  "$schema": "./config.schema.json",
+  "app": {
+    "name": "appMaker",
+    "version": "2.0.0",
+    "description": "AI 驱动的 APP 开发系统"
+  },
+  "server": {
+    "host": "localhost",
+    "port": 3000,
+    "cors": {
+      "enabled": true,
+      "origins": ["http://localhost:3000", "http://localhost:5173"]
+    }
+  },
+  "anthropic": {
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "model": "claude-sonnet-4-20250514",
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "timeout": 60000
+  },
+  "mcp": {
+    "server": {
+      "host": "localhost",
+      "port": 3100
+    },
+    "transport": "stdio"
+  },
+  "agents": {
+    "maxConcurrent": 3,
+    "timeouts": {
+      "planner": 60000,
+      "nativeCoder": 120000,
+      "nativeReviewer": 60000,
+      "corrector": 90000
+    },
+    "retryPolicy": {
+      "maxRetries": 3,
+      "backoffMultiplier": 2
+    }
+  },
+  "tasks": {
+    "maxReviewCycles": 3,
+    "checkpointEnabled": true,
+    "checkpointPath": "./data/checkpoints"
+  },
+  "paths": {
+    "projectRoot": "./projects",
+    "plans": "./plans",
+    "rules": "./rules",
+    "skills": "./skills",
+    "logs": "./logs",
+    "data": "./data"
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "transports": ["console", "file"],
+    "fileOptions": {
+      "maxSize": "10m",
+      "maxFiles": 7
+    }
+  },
+  "security": {
+    "allowedOrigins": ["http://localhost:3000", "http://localhost:5173"],
+    "rateLimit": {
+      "windowMs": 60000,
+      "maxRequests": 100
+    }
+  },
+  "features": {
+    "daemonMode": true,
+    "autoFix": true,
+    "telemetry": false,
+    "previewMode": false
+  }
+}
