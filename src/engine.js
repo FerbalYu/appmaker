@@ -28,6 +28,7 @@ export class ExecutionEngine extends EventEmitter {
       max_retries: 2,
       max_concurrent_tasks: 3,
       token_budget: 100000,
+      idle_timeout_ms: 1800000,
       ...config
     };
     
@@ -306,6 +307,7 @@ export class ExecutionEngine extends EventEmitter {
           id: task.id,
           type: task.type || 'create',
           description: task.description,
+          subtasks: task.subtasks || [],
           files: task.files || [],
           context
         });
@@ -313,7 +315,8 @@ export class ExecutionEngine extends EventEmitter {
       {
         maxRetries: this.config.max_retries,
         taskId: task.id,
-        phase: 'code'
+        phase: 'code',
+        context
       }
     );
 
@@ -349,7 +352,8 @@ export class ExecutionEngine extends EventEmitter {
       {
         maxRetries: this.config.max_retries,
         taskId: task.id,
-        phase: 'review'
+        phase: 'review',
+        context
       }
     );
 
@@ -386,7 +390,8 @@ export class ExecutionEngine extends EventEmitter {
         {
           maxRetries: this.config.max_retries,
           taskId: task.id,
-          phase: 'fix'
+          phase: 'fix',
+          context
         }
       );
 
@@ -452,28 +457,53 @@ export class ExecutionEngine extends EventEmitter {
    * @private
    */
   async _executeWithRetry(fn, options = {}) {
-    const { maxRetries = 2, taskId, phase } = options;
+    const { maxRetries = 2, taskId, phase, context } = options;
     let lastError;
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+      let abortController = new AbortController();
+      if (context) context.abortController = abortController;
+
+      let lastActionTime = Date.now();
+      const onAction = () => { lastActionTime = Date.now(); };
+      this.on('agent:action', onAction);
+
+      const heartbeatInterval = setInterval(() => {
+        if (Date.now() - lastActionTime > this.config.idle_timeout_ms) {
+          this._log('ERROR', `[${taskId}] ⚠️ Agent 发呆超过 ${this.config.idle_timeout_ms / 1000}s, 触发心跳打断...`);
+          abortController.abort(new Error('STALLED_HEARTBEAT'));
+        }
+      }, 10000);
+
       try {
-        return await fn();
+        const result = await fn();
+        if (result && result.success === false && result.error) {
+           const errObj = result.error;
+           const errMsg = typeof errObj === 'string' ? errObj : (errObj.message || errObj.type || JSON.stringify(errObj));
+           throw new Error(errMsg);
+        }
+        return result;
       } catch (error) {
         lastError = error;
+        const isStalled = error.message === 'STALLED_HEARTBEAT' || error.name === 'AbortError' || (error.cause && error.cause.message === 'STALLED_HEARTBEAT');
         
-        if (this._isRetryableError(error)) {
+        if (this._isRetryableError(error) || isStalled) {
           if (attempt <= maxRetries) {
             const delay = Math.pow(2, attempt - 1) * 1000;
-            this._log('WARN', `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${error.message}`);
+            const reason = isStalled ? '执行卡死发呆/超时中止' : error.message;
+            this._log('WARN', `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${reason}`);
             await this._sleep(delay);
           } else {
-            this._log('ERROR', `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败`);
-            return null;
+            this._log('ERROR', `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败: ${error.message}`);
+            return { success: false, error: lastError.message, status: 'failed' };
           }
         } else {
           this._log('ERROR', `[${taskId}] ❌ ${phase} 非重试性错误: ${error.message}`);
-          return null;
+          return { success: false, error: lastError.message, status: 'failed' };
         }
+      } finally {
+        clearInterval(heartbeatInterval);
+        this.off('agent:action', onAction);
       }
     }
 
@@ -487,8 +517,10 @@ export class ExecutionEngine extends EventEmitter {
   _isRetryableError(error) {
     const retryablePatterns = [
       'timeout', 'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
-      'network', 'rate limit', '429', '503', '502',
-      'socket hang up', 'Request timeout'
+      'network', 'rate limit', '429', '500', '502', '503', '504',
+      'socket hang up', 'Request timeout', 'fetch', 'api error',
+      '响应结构异常', 'json', 'parse error',
+      '1000', '1001', '1002', '1024', '1033', '2045', '2056'
     ];
     
     const errorMsg = (error?.message || '').toLowerCase();

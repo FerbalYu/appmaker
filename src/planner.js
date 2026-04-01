@@ -77,17 +77,18 @@ export class Planner {
     return result;
   }
 
-  /**
-   * 创建项目任务记录
-   */
   async createProjectTasks(plan) {
     const results = [];
     for (const task of plan.tasks) {
+      let desc = `类型: ${task.type} | 依赖: ${task.dependencies.join(', ') || '无'}`;
+      if (task.subtasks && task.subtasks.length > 0) {
+        desc += `\n\n【子任务】\n${task.subtasks.map(s => '- ' + s).join('\n')}`;
+      }
       const result = await this.toolbox.execute('task_create', {
         title: `[${task.id}] ${task.description}`,
-        description: `类型: ${task.type} | 依赖: ${task.dependencies.join(', ') || '无'}`,
+        description: desc,
         priority: task.type === 'architect' ? 'high' : 'medium',
-        tags: [task.type, plan.project?.name]
+        tags: [task.type, plan.project?.name || 'appmaker']
       });
       if (result.success) {
         results.push({ taskId: task.id, ...result.result });

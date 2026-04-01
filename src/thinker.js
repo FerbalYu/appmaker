@@ -15,64 +15,92 @@ export class MultiAgentThinker {
   /**
    * 调用特定的 LLM 角色
    */
-  async _callAgent(roleName, systemPrompt, userMessage, temperature) {
+  async _callAgent(roleName, systemPrompt, userMessage, temperature, maxRetries = 3) {
     const endpoint = this.apiHost.endsWith('/v1') 
         ? `${this.apiHost}/chat/completions` 
         : `${this.apiHost}/v1/chat/completions`;
 
-    try {
-      const payload = {
-        model: this.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: temperature,
-        max_tokens: 4096
-      };
-      
-      if (this.apiHost.includes('minimaxi.com')) {
-        payload.extra_body = { reasoning_split: true };
-      }
+    let lastError = null;
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(600000)
-      });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const payload = {
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+          ],
+          temperature: temperature,
+          max_completion_tokens: 10240
+        };
+        
+        if (this.apiHost.includes('minimaxi.com')) {
+          payload.extra_body = { reasoning_split: true };
+        }
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`API Error ${res.status}: ${errorText}`);
-      }
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 600000);
 
-      const data = await res.json();
-      if (!data.choices || data.choices.length === 0) {
-        throw new Error(`API 响应结构异常`);
-      }
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
 
-      const msg = data.choices[0].message;
-      let finalContent = '';
-      
-      // Extract Minimax Extra Body Reasoning Split mechanism
-      if (msg.reasoning_details && msg.reasoning_details.length > 0) {
-        const reasoningText = msg.reasoning_details.map(r => r.text).join('\n');
-        finalContent += `<think>\n${reasoningText.trim()}\n</think>\n\n`;
-      } else if (msg.reasoning_content && msg.reasoning_content.trim() !== '') {
-        // Support native reasoning content fields (DeepSeek-R1 style fallback)
-        finalContent += `<think>\n${msg.reasoning_content.trim()}\n</think>\n\n`;
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(`API Error ${res.status}: ${errorText}`);
+        }
+
+        const data = await res.json();
+        
+        if (data.base_resp && data.base_resp.status_code !== 0) {
+          throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+        } else if (data.error) {
+          throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
+        }
+        
+        if (!data.choices || data.choices.length === 0) {
+          throw new Error(`API 响应结构异常`);
+        }
+
+        const msg = data.choices[0].message;
+        let finalContent = '';
+        
+        if (msg.reasoning_details && msg.reasoning_details.length > 0) {
+          const reasoningText = msg.reasoning_details.map(r => r.text).join('\n');
+          finalContent += `<think>\n${reasoningText.trim()}\n</think>\n\n`;
+        } else if (msg.reasoning_content && msg.reasoning_content.trim() !== '') {
+          finalContent += `<think>\n${msg.reasoning_content.trim()}\n</think>\n\n`;
+        }
+        
+        finalContent += (msg.content || '').trim();
+        
+        return finalContent;
+      } catch (error) {
+        lastError = error;
+        const isRetryable = error.name === 'AbortError' || 
+          error.message.includes('fetch') || 
+          /429|500|502|503|504|timeout|refused|reset|1000|1001|1002|1024|1033|2045|2056/i.test(error.message);
+          
+        if (isRetryable && attempt < maxRetries) {
+          if (this.verbose) {
+             console.log(`[${roleName}] API 调用遇到可恢复错误，等待重试 (${attempt}/${maxRetries}): ${error.message.substring(0, 100)}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        } else {
+          break; // 不可重试或已达最大次数
+        }
       }
-      
-      finalContent += (msg.content || '').trim();
-      
-      return finalContent;
-    } catch (error) {
-      throw new Error(`[${roleName}] 调用失败: ${error.message}`);
     }
+    
+    throw new Error(`[${roleName}] 调用失败 (重试 ${maxRetries} 次后): ${lastError?.message}`);
   }
 
   /**

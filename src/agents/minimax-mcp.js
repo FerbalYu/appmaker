@@ -33,8 +33,9 @@ const SYSTEM_PROMPT = `你是一个资深的软件架构师。请深入分析以
       "id": "t1",
       "description": "具体的开发阶段或实现任务",
       "type": "architect",
+      "subtasks": ["明确的物理步骤1: 创建某个具体文件", "明确的物理步骤2: 修改某个现有业务逻辑"],
       "dependencies": [],
-      "agent": "claude-code",
+      "agent": "native-coder",
       "estimated_tokens": 2000,
       "estimated_minutes": 15
     }
@@ -66,7 +67,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         body: JSON.stringify({
           model: this.model,
           messages: [{ role: 'user', content: 'hello' }],
-          max_tokens: 10
+          max_completion_tokens: 10
         }),
         signal: AbortSignal.timeout(10000)
       });
@@ -155,6 +156,12 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
         const data = await res.json();
         
+        if (data.base_resp && data.base_resp.status_code !== 0) {
+          throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+        } else if (data.error) {
+          throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
+        }
+
         if (!data?.choices || data.choices.length === 0) {
           console.warn(`[${this.name}] API 返回数据缺少 choices 字段，原始响应:`, JSON.stringify(data).substring(0, 500));
           break;

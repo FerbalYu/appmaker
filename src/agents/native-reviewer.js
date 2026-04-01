@@ -240,6 +240,9 @@ ${codeToReview}
         payload.extra_body = { reasoning_split: true };
       }
 
+      const abortController = task.context?.abortController || new AbortController();
+      const hardTimeoutId = setTimeout(() => abortController.abort(), 2 * 60 * 60 * 1000); // 2h hard kill
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -247,14 +250,21 @@ ${codeToReview}
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(600000)
+        signal: abortController.signal
       });
+      clearTimeout(hardTimeoutId);
 
       if (!res.ok) {
         throw new Error(`API Error ${res.status}: ${await res.text()}`);
       }
 
       const data = await res.json();
+      
+      if (data.base_resp && data.base_resp.status_code !== 0) {
+        throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+      } else if (data.error) {
+        throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
+      }
       
       if (!data.choices || data.choices.length === 0) {
         throw new Error(`API 响应结构异常`);

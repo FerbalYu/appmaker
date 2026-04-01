@@ -158,12 +158,17 @@ export class NativeCoderAdapter extends AgentAdapter {
 4. 代码可读性 - 使用有意义的变量名，添加必要注释
 5. 完整性 - 不要留 TODO，确保功能完整可运行
 6. 严禁 Bash 穿透写文件 - 当你要创建或更改代码、文档时，**必须且只能使用 \`write_file\` 或 \`edit_file\` 工具**。绝对禁止使用 \`bash_execute\` 执行 echo/cat 等命令输出文件，否则系统判定为你严重失职！
+7. 拒绝交白卷 - 本次任务中包含必须执行的【明确子任务】，你必须主动使用工具创建、修改文件以完成子任务。**绝对不允许仅回复"了解逻辑"而没有任何 tool_calls。**
 
 你已经接入了全自动开发动作执行平台，当你需要读取/修改文件、执行命令时，请直接主动调用工具 (Tools)。请尽可能结合当前上下文环境做出符合项目技术栈的直接干预和修改！`;
 
+      const subtasksSection = task.subtasks && task.subtasks.length > 0 
+        ? `\n## 明确子任务 (必须执行)\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n` 
+        : '';
+
       const userPrompt = `## 项目需求
 ${task.description}
-
+${subtasksSection}
 ## 项目结构
 ${projectContext.structure || '空目录'}
 
@@ -205,6 +210,9 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
           payload.extra_body = { reasoning_split: true };
         }
 
+        const abortController = task.context?.abortController || new AbortController();
+        const hardTimeoutId = setTimeout(() => abortController.abort(), 2 * 60 * 60 * 1000); // 2h hard kill
+
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -212,8 +220,9 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(600000)
+          signal: abortController.signal
         });
+        clearTimeout(hardTimeoutId);
 
         if (!res.ok) {
           const errorText = await res.text();
@@ -222,6 +231,12 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
         const data = await res.json();
         totalTokens += data.usage?.total_tokens || 0;
+        
+        if (data.base_resp && data.base_resp.status_code !== 0) {
+          throw new Error(`MiniMax API Error ${data.base_resp.status_code}: ${data.base_resp.status_msg}`);
+        } else if (data.error) {
+          throw new Error(`API Error ${data.error.code || data.error.type}: ${data.error.message}`);
+        }
         
         if (!data.choices || data.choices.length === 0) {
           throw new Error(`API 响应结构异常: ${JSON.stringify(data).substring(0,200)}`);
