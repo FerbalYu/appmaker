@@ -97,7 +97,6 @@ async function main() {
   try {
     console.log('='.repeat(50));
     console.log('appMaker - AI 驱动的 APP 开发系统');
-    console.log('claude-code 编程 + opencode 毒舌点评');
     console.log('工作目录: ' + executeDir);
     console.log('='.repeat(50));
     console.log();

@@ -1,6 +1,5 @@
 /**
  * Execution Engine
- * 执行双 Agent 协作流程：claude-code 编程 + opencode 毒舌点评
  * 
  * 核心特性：
  * - 智能重试机制（网络错误自动重试）
