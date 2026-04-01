@@ -202,7 +202,8 @@ ${toolsDescription}
 - 至少找到 3 个问题（除非代码确实完美）
 - CRITICAL 必须包含具体代码行号或位置
 - 不要遗漏任何潜在的 bug 或安全问题
-- 如果没有问题，score 设为 100，issues 设为空数组
+- 如果待审查文件或代码内容为空，且该任务明显需要产出（如编写/修改代码或文档），你必须给出极低分（例如 20 分）并判定为 Failed！
+- 如果没有问题且确实有实质产出，score 设为 100，issues 设为空数组
 不要包含任何 Markdown 标签或额外文字。`;
 
       const userPrompt = `## 项目需求
@@ -226,20 +227,26 @@ ${codeToReview}
       console.log(`[${this.name}] 请求原生 API 进行代码审查... (Model: ${this.model})`);
       console.log(`[${this.name}] 审查文件数: ${filesReviewed.length}`);
 
+      const payload = {
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3
+      };
+      
+      if (this.apiHost.includes('minimaxi.com')) {
+        payload.extra_body = { reasoning_split: true };
+      }
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.3
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(120000)
       });
 
@@ -253,8 +260,21 @@ ${codeToReview}
         throw new Error(`API 响应结构异常`);
       }
       
-      const contentStr = data.choices[0].message.content;
+      const message = data.choices[0].message;
+      
+      if (message.reasoning_details && message.reasoning_details.length > 0) {
+        const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+        if (typeof this.emit === 'function') {
+          this.emit('action', { type: 'think', content: reasoningText.trim() });
+        }
+      }
+      
+      const contentStr = message.content;
       const resultObj = this._extractJSON(contentStr);
+
+      if (!resultObj || typeof resultObj.score !== 'number') {
+        throw new Error(`解析 JSON 失败 (评分未能提取): ${contentStr.substring(0, 150)}...`);
+      }
 
       return this._formatResult({
         task_id: task.id,
@@ -263,6 +283,7 @@ ${codeToReview}
         summary: resultObj.summary || resultObj.comments || '无评价',
         issues: resultObj.issues || [],
         files_reviewed: filesReviewed,
+        tokens_used: data.usage?.total_tokens || 0,
         duration_ms: Date.now() - startTime
       }, startTime);
 
@@ -275,6 +296,15 @@ ${codeToReview}
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
     
+    // Capture <think> block and emit to telemetry before stripping
+    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch && typeof this.emit === 'function') {
+      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+    }
+    
+    // Strip <think>...</think> reasoning tags which corrupt JSON matching
+    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    
     // 1. Try code blocks
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     if (codeBlocks.length > 0) {
@@ -284,25 +314,28 @@ ${codeToReview}
         } catch (e) {
           try {
             return JSON.parse(jsonrepair(match[1].trim()));
-          } catch(e2) {
-            // continue parsing next block
-          }
+          } catch(e2) {}
         }
       }
     }
     
-    // 2. Try JSON Object syntax { ... }
-    const startObj = output.indexOf('{');
-    const endObj = output.lastIndexOf('}');
-    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
-      const candidate = output.substring(startObj, endObj + 1);
-      try {
-        return JSON.parse(candidate);
-      } catch(e) {
-        try {
-          return JSON.parse(jsonrepair(candidate));
-        } catch(e2) {
-          console.warn(`[${this.name}] JSON 解析失败`);
+    // 2. Try JSON Object syntaxes through brace matching
+    const braceCount = (output.match(/[{}]/g) || []).length;
+    if (braceCount >= 2) {
+      let depth = 0, validEnd = -1, firstBrace = output.indexOf('{');
+      if (firstBrace !== -1) {
+        for (let i = firstBrace; i < output.length; i++) {
+          if (output[i] === '{') depth++;
+          else if (output[i] === '}') {
+            depth--;
+            if (depth === 0) { validEnd = i; break; }
+          }
+        }
+        if (validEnd > firstBrace) {
+          const candidate = output.substring(firstBrace, validEnd + 1);
+          try { return JSON.parse(candidate); } catch(e) {
+            try { return JSON.parse(jsonrepair(candidate)); } catch {}
+          }
         }
       }
     }
@@ -314,7 +347,7 @@ ${codeToReview}
        console.warn(`[${this.name}] 全文 JSON 解析失败`);
     }
 
-    return { score: 80, summary: "JSON parse failed", issues: [] };
+    return null;
   }
 
   _formatResult(rawResult, startTime) {
@@ -330,7 +363,7 @@ ${codeToReview}
       },
       metrics: {
         duration_ms: rawResult.duration_ms || (Date.now() - startTime),
-        tokens_used: 0
+        tokens_used: rawResult.tokens_used || 0
       },
       errors: []
     };

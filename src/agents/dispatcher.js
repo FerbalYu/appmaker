@@ -153,13 +153,9 @@ export class AgentDispatcher {
    * @private
    */
   async _executeWithTimeout(promise, timeout, agentType, taskId) {
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`[${agentType}] Task ${taskId} execution timeout (${timeout / 1000}s)`));
-      }, timeout);
-    });
-
-    return Promise.race([promise, timeoutPromise]);
+    // 根据需求，取消 task 总时间超时，将其放宽为由各个 API 或工具自身的超时来阻断
+    // 否则过长的 npm install 或复杂的多步推理会被中途强杀
+    return promise;
   }
 
   /**

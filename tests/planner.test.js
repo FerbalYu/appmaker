@@ -4,8 +4,9 @@ describe('Planner', () => {
   let planner;
 
   beforeEach(() => {
-    planner = new Planner();
     // mock api calls
+    jest.spyOn(require('../src/thinker').MultiAgentThinker.prototype, 'think').mockResolvedValue('Mocked thought process...');
+    planner = new Planner();
     planner.dispatcher = {
        dispatch: jest.fn().mockResolvedValue({
          output: {

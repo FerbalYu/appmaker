@@ -5,8 +5,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class ProgressMonitor {
-  constructor(engine, port = 8088) {
-    this.engine = engine;
+  constructor(eventBus, port = 8088) {
+    this.bus = eventBus;
     this.port = port;
     this.clients = new Set();
     this.server = null;
@@ -17,18 +17,17 @@ export class ProgressMonitor {
 
   _hookEvents() {
     const eventsToForward = [
+      'think:start', 'think:message', 'think:done',
+      'plan:start', 'plan:done', 'plan:ready',
       'milestone:start', 'milestone:done',
-      'task:start', 'task:done', 'task:error', 'task:review'
+      'task:start', 'task:done', 'task:error', 'task:review', 'task:progress',
+      'agent:action', 'execution:done'
     ];
 
     eventsToForward.forEach(eventName => {
-      this.engine.on(eventName, (data) => {
+      this.bus.on(eventName, (data) => {
         this._broadcast(eventName, data);
       });
-    });
-
-    this.engine.on('plan:start', (data) => {
-      this._broadcast('plan:start', data);
     });
   }
 

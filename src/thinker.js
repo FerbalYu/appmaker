@@ -21,20 +21,27 @@ export class MultiAgentThinker {
         : `${this.apiHost}/v1/chat/completions`;
 
     try {
+      const payload = {
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: temperature,
+        max_tokens: 4096
+      };
+      
+      if (this.apiHost.includes('minimaxi.com')) {
+        payload.extra_body = { reasoning_split: true };
+      }
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage }
-          ],
-          temperature: temperature
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(120000)
       });
 
@@ -48,7 +55,21 @@ export class MultiAgentThinker {
         throw new Error(`API 响应结构异常`);
       }
 
-      return data.choices[0].message.content.trim();
+      const msg = data.choices[0].message;
+      let finalContent = '';
+      
+      // Extract Minimax Extra Body Reasoning Split mechanism
+      if (msg.reasoning_details && msg.reasoning_details.length > 0) {
+        const reasoningText = msg.reasoning_details.map(r => r.text).join('\n');
+        finalContent += `<think>\n${reasoningText.trim()}\n</think>\n\n`;
+      } else if (msg.reasoning_content && msg.reasoning_content.trim() !== '') {
+        // Support native reasoning content fields (DeepSeek-R1 style fallback)
+        finalContent += `<think>\n${msg.reasoning_content.trim()}\n</think>\n\n`;
+      }
+      
+      finalContent += (msg.content || '').trim();
+      
+      return finalContent;
     } catch (error) {
       throw new Error(`[${roleName}] 调用失败: ${error.message}`);
     }

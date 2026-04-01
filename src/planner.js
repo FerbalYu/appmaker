@@ -125,77 +125,119 @@ export class Planner {
     console.log(`[Planner] 🤖 开始 AI 深度需求分析...`);
     console.log(`[Planner] 需求: "${requirement.substring(0, 80)}${requirement.length > 80 ? '...' : ''}"`);
 
-    const startTime = Date.now();
     let enhancedRequirement = requirement;
 
-    this._showSpinner(startTime, '4-Agent 专家团队深度思考与架构发想中...');
+    console.log(`[Planner] 🤖 4-Agent 专家联合深度需求分析中...`);
     try {
-      const thinker = new MultiAgentThinker({ verbose: false });
-      const thought = await thinker.think(requirement);
-      enhancedRequirement = `【原始需求】\n${requirement}\n\n【4-Agent 专家团队深度解析】\n${thought}`;
-    } catch (err) {
-      console.log(`\n[Planner] ⚠️ 4-Agent 思考模式发生降级 (${err.message})`);
-    }
-    this._clearSpinner();
-
-    const enhancedPrompt = this._buildPlanningPrompt(enhancedRequirement);
-    
-    this._showSpinner(Date.now(), 'AI 生成执行计划清单中...');
-
-    const plannerAgentName = this.config.planner_agent || 'native-coder';
-
-    try {
-      const agentResult = await this.dispatcher.dispatch({
-        id: 'plan_analysis',
-        type: 'analysis',
-        description: plannerAgentName === 'native-coder' ? enhancedPrompt : enhancedRequirement,
-        agent: plannerAgentName,
-        context: { 
-          project_root: this.projectRoot,
-          requirement: enhancedRequirement,
-          planning_config: {
-            max_tasks: this.config.max_total_tasks,
-            max_per_milestone: this.config.max_tasks_per_milestone,
-            token_budget: this.config.token_budget
-          }
+      if (this.config.globalBus) {
+        this.config.globalBus.emit('think:start', { requirement });
+      }
+      
+      const thinker = new MultiAgentThinker({ verbose: true });
+      const thought = await thinker.think(requirement, (msg) => {
+        if (this.config.globalBus) {
+          this.config.globalBus.emit('think:message', { role: 'System', content: msg });
         }
       });
+      enhancedRequirement = `【原始需求】\n${requirement}\n\n【4-Agent 专家团队深度解析】\n${thought}`;
+    } catch (err) {
+      console.log(`[Planner] ⚠️ 4-Agent 思考模式发生降级 (${err.message})`);
+    } finally {
+      if (this.config.globalBus) {
+        this.config.globalBus.emit('plan:start', { requirement: enhancedRequirement });
+      }
+    }
 
-      this._clearSpinner();
-      
-      if (process.env.PLANNER_DEBUG) {
-        console.log('\n[Planner] 📋 AI 返回内容:');
-        console.log(JSON.stringify(agentResult, null, 2).substring(0, 1500));
-        console.log('--------------------\n');
+    let currentAttempt = 0;
+    const maxRetries = 3;
+
+    while (currentAttempt < maxRetries) {
+      currentAttempt++;
+      if (currentAttempt > 1) {
+        console.log(`[Planner] 🔄 正在重试计划生成 (尝试 ${currentAttempt}/${maxRetries})...`);
       }
 
-      const content = this._extractJSON(
-        agentResult.output?.raw_output ||
-        agentResult.output?.summary ||
-        agentResult.output?.review_report ||
-        agentResult.result ||
-        String(agentResult)
-      );
+      const enhancedPrompt = this._buildPlanningPrompt(enhancedRequirement);
+      
+      this._showSpinner(Date.now(), 'AI 生成执行计划清单中...');
 
-      const parsedPlan = JSON.parse(content);
-      const finalizedPlan = this._finalizePlan(parsedPlan, requirement);
-      
-      console.log(`[Planner] ✅ 计划生成成功`);
-      console.log(`[Planner] 📋 任务数: ${finalizedPlan.tasks.length} | 里程碑: ${finalizedPlan.milestones.length}`);
-      console.log(`[Planner] ⏱️ 预估耗时: ${finalizedPlan.metadata.total_minutes_estimate} 分钟`);
-      
-      return finalizedPlan;
-    } catch (e) {
-      this._clearSpinner();
-      
-      console.log(`[Planner] ⚠️ AI 分析失败 (${e.message})，使用规则分析回退`);
-      
-      if (process.env.DEBUG || process.env.PLANNER_DEBUG) {
-        console.log('[Planner] 📋 调试信息:');
-        console.log(JSON.stringify(agentResult || {}, null, 2).substring(0, 1000));
+      const plannerAgentName = this.config.planner_agent || 'architect';
+
+      try {
+        let content = '';
+        
+        if (plannerAgentName === 'native-coder' || plannerAgentName === 'architect') {
+          // Bypass NativeCoder for raw planning to avoid tool_call constraint errors.
+          const thinker = new MultiAgentThinker({ verbose: false });
+          const agentResultStr = await thinker._callAgent('Architect', '你是一个资深软件架构师。请只输出合法的 JSON，不要输出其他废话，无需 tool_calls 格式。', enhancedPrompt, 0.4);
+          
+          this._clearSpinner();
+          
+          if (process.env.PLANNER_DEBUG) {
+            console.log('\n[Planner] 📋 AI 返回内容:');
+            console.log(agentResultStr.substring(0, 1500));
+            console.log('--------------------\n');
+          }
+          content = this._extractJSON(agentResultStr);
+        } else {
+          // Custom planning agent (e.g. minimax-mcp)
+          const retryContext = currentAttempt > 1 
+            ? `\n\n【System Instruction: It is currently attempt ${currentAttempt}. Your previous answer resulted in 0 tasks. PLEASE DOUBLE CHECK your formatting and ensure you provide at least 1 actionable task. Random Timestamp: ${Date.now()}】` 
+            : '';
+            
+          const agentResult = await this.dispatcher.dispatch({
+            id: 'plan_analysis',
+            type: 'analysis',
+            description: enhancedRequirement + retryContext,
+            agent: plannerAgentName,
+            context: { 
+              project_root: this.projectRoot,
+              requirement: enhancedRequirement,
+              planning_config: {
+                max_tasks: this.config.max_total_tasks,
+                max_per_milestone: this.config.max_tasks_per_milestone,
+                token_budget: this.config.token_budget
+              }
+            }
+          });
+          
+          this._clearSpinner();
+          content = this._extractJSON(
+            agentResult.output?.raw_output ||
+            agentResult.output?.summary ||
+            agentResult.output?.review_report ||
+            agentResult.result ||
+            String(agentResult)
+          );
+        }
+
+        const parsedPlan = JSON.parse(content);
+        const finalizedPlan = this._finalizePlan(parsedPlan, requirement);
+        
+        // ================= 失败检测逻辑 =================
+        if (!finalizedPlan.tasks || finalizedPlan.tasks.length === 0) {
+          throw new Error('AI 生成的计划为空 (0 个任务)，可能未理解需求');
+        }
+        
+        console.log(`[Planner] ✅ 计划生成成功`);
+        console.log(`[Planner] 📋 任务数: ${finalizedPlan.tasks.length} | 里程碑: ${finalizedPlan.milestones.length}`);
+        console.log(`[Planner] ⏱️ 预估耗时: ${finalizedPlan.metadata.total_minutes_estimate} 分钟`);
+        
+        return finalizedPlan;
+      } catch (e) {
+        this._clearSpinner();
+        
+        console.log(`[Planner] ⚠️ 第 ${currentAttempt} 次尝试生成失败: ${e.message}`);
+        
+        if (process.env.DEBUG || process.env.PLANNER_DEBUG) {
+          console.log('[Planner] 📋 调试信息:');
+        }
+
+        if (currentAttempt >= maxRetries) {
+          console.log(`[Planner] ⚠️ 达到最大重试次数，使用规则分析回退`);
+          return this._generateFallbackPlan(requirement);
+        }
       }
-
-      return this._generateFallbackPlan(requirement);
     }
   }
 
@@ -296,6 +338,19 @@ ${requirement}
       }
       return str;
     }
+
+    // Capture <think> block and emit to telemetry before stripping
+    const thinkMatch = typeof output === 'string' ? output.match(/<think>([\s\S]*?)<\/think>/i) : null;
+    if (thinkMatch && this.config && this.config.globalBus) {
+      this.config.globalBus.emit('agent:action', { 
+        agent: 'planner', 
+        type: 'think', 
+        content: thinkMatch[1].trim()
+      });
+    }
+
+    // Strip <think>...</think> reasoning tags which corrupt JSON matching
+    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     // 1. 尝试直接提取 JSON 代码块
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];

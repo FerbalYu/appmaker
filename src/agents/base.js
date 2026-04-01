@@ -11,9 +11,11 @@
  */
 
 import { UniversalToolbox } from './universal-toolbox.js';
+import { EventEmitter } from 'events';
 
-export class AgentAdapter {
+export class AgentAdapter extends EventEmitter {
   constructor(config) {
+    super();
     this.config = config;
     this.name = config.name;
     this.type = config.type;
@@ -73,6 +75,8 @@ export class AgentAdapter {
    * @returns {Promise<Object>}
    */
   async executeTool(toolName, args = {}) {
+    this.emit('action', { type: 'tool_call', tool: toolName, args });
+    
     const cacheKey = `${toolName}:${JSON.stringify(args)}`;
     
     if (this._toolCache.has(cacheKey)) {

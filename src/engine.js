@@ -48,16 +48,26 @@ export class ExecutionEngine extends EventEmitter {
       max_retries: this.config.max_retries
     });
 
-    this.dispatcher.registerAgent('native-reviewer', () => new NativeReviewerAdapter({
-      model: config.native_reviewer_model,
-      api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
-      api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
-    }));
-    this.dispatcher.registerAgent('native-coder', () => new NativeCoderAdapter({
-      model: config.native_coder_model,
-      api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
-      api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST
-    }));
+    this.dispatcher.registerAgent('native-reviewer', () => {
+      const adapter = new NativeReviewerAdapter({
+        model: config.native_reviewer_model,
+        api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
+        api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST,
+        project_root: this.projectRoot
+      });
+      adapter.on('action', (act) => this.emit('agent:action', { ...act, agent: 'native-reviewer' }));
+      return adapter;
+    });
+    this.dispatcher.registerAgent('native-coder', () => {
+      const adapter = new NativeCoderAdapter({
+        model: config.native_coder_model,
+        api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
+        api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST,
+        project_root: this.projectRoot
+      });
+      adapter.on('action', (act) => this.emit('agent:action', { ...act, agent: 'native-coder' }));
+      return adapter;
+    });
   }
 
   /**
@@ -142,6 +152,19 @@ export class ExecutionEngine extends EventEmitter {
     while (completed.size < milestoneTasks.length) {
       const availableTasks = this._getAvailableTasks(taskGraph, executing, completed);
       
+      if (executing.size === 0 && availableTasks.length === 0 && completed.size < milestoneTasks.length) {
+        const blocked = milestoneTasks.filter(t => !completed.has(t.id) && !executing.has(t.id));
+        if (blocked.length > 0) {
+          this._log('ERROR', `检测到死锁！${blocked.length} 个任务无法完成`);
+          for (const task of blocked) {
+            const errorResult = { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
+            results.push(errorResult);
+            completed.set(task.id, errorResult);
+          }
+        }
+        break;
+      }
+
       while (executing.size < maxConcurrent && availableTasks.length > 0 && !this.halt) {
         const task = availableTasks.shift();
         this._log('INFO', `[${task.id}] 调度执行 (依赖: ${task.dependencies?.length || 0})`);
@@ -175,19 +198,6 @@ export class ExecutionEngine extends EventEmitter {
       if (this.halt || this.aborted) {
         this._log('WARN', '执行被中止，等待运行中的任务完成...');
         await Promise.allSettled(executing.values());
-        break;
-      }
-
-      if (executing.size === 0 && availableTasks.length === 0 && completed.size < milestoneTasks.length) {
-        const blocked = milestoneTasks.filter(t => !completed.has(t.id) && !executing.has(t.id));
-        if (blocked.length > 0) {
-          this._log('ERROR', `检测到死锁！${blocked.length} 个任务无法完成`);
-          for (const task of blocked) {
-            const errorResult = { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
-            results.push(errorResult);
-            completed.set(task.id, errorResult);
-          }
-        }
         break;
       }
     }
@@ -229,7 +239,8 @@ export class ExecutionEngine extends EventEmitter {
       if (completed.has(id) || executing.has(id)) continue;
       
       const depsSatisfied = [...node.dependencies].every(depId => 
-        completed.has(depId) && completed.get(depId)?.status === 'done'
+        (completed.has(depId) && completed.get(depId)?.status === 'done') ||
+        (this.tasks.has(depId) && this.tasks.get(depId)?.status === 'done')
       );
       
       if (depsSatisfied) {
@@ -320,11 +331,14 @@ export class ExecutionEngine extends EventEmitter {
       return errRes;
     }
 
-    const filesCreated = (codeResult.output?.files_created?.length || 0) + (codeResult.output?.files_modified?.length || 0);
-    if (filesCreated === 0) {
+    const filesCreated = codeResult.output?.files_created || [];
+    const filesModified = codeResult.output?.files_modified || [];
+    const totalFilesChanged = filesCreated.length + filesModified.length;
+    
+    if (totalFilesChanged === 0) {
       this._log('WARN', `[${task.id}] ⚠️ native-coder 本次执行没有生成或修改任何文件`);
     } else {
-      this._log('INFO', `[${task.id}] ✅ 编程完成，文件: ${filesCreated}`);
+      this._log('INFO', `[${task.id}] ✅ 编程完成，文件变更数: ${totalFilesChanged}`);
     }
 
     reviewResult = await this._executeWithRetry(
@@ -334,7 +348,7 @@ export class ExecutionEngine extends EventEmitter {
           id: `review_${task.id}`,
           type: 'review',
           description: `评审任务: ${task.description}`,
-          files: codeResult.output?.files_created || [],
+          files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
           context
         });
       },
@@ -371,7 +385,7 @@ export class ExecutionEngine extends EventEmitter {
             id: `${task.id}_fix_${cycle}`,
             type: 'modify',
             description: fixPrompt,
-            files: codeResult.output?.files_created || [],
+            files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
             context
           });
         },
@@ -391,7 +405,7 @@ export class ExecutionEngine extends EventEmitter {
         id: `review_${task.id}_${cycle}`,
         type: 'review',
         description: `重新评审: ${task.description}`,
-        files: codeResult.output?.files_created || [],
+        files: [...(codeResult.output?.files_created || []), ...(codeResult.output?.files_modified || [])],
         context
       });
 

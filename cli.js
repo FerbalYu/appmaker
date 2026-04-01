@@ -23,6 +23,22 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'readline';
 import { exec } from 'child_process';
+import { EventEmitter } from 'events';
+
+const globalBus = new EventEmitter();
+let isMonitorStarted = false;
+
+async function startMonitor() {
+  if (isMonitorStarted) return;
+  const monitor = new ProgressMonitor(globalBus, 8088);
+  const monitorUrl = await monitor.start();
+  console.log(`\x1b[36m🚀 已开启智能进度看板: ${monitorUrl}\x1b[0m\n`);
+  if (process.platform === 'win32') exec(`start ${monitorUrl}`);
+  else if (process.platform === 'darwin') exec(`open ${monitorUrl}`);
+  else exec(`xdg-open ${monitorUrl}`);
+  isMonitorStarted = true;
+  return monitor;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -180,10 +196,13 @@ async function main() {
 
     if (globalDaemon) {
       await globalDaemon.saveState();
-      console.log('\n🔮 守护进程继续在后台运行...');
+      await globalDaemon.stop();
+      console.log('\n🔮 运行状态已持久化保存至守护进程数据目录。');
       console.log(`   数据目录: ${daemonDataDir}`);
       console.log(`   查看状态: bun cli.js daemon --dir "${executeDir}"`);
     }
+
+    process.exit(0);
 
   } catch (error) {
     if (globalDaemon) {
@@ -364,6 +383,8 @@ async function cmdRun(requirement) {
     process.exit(1);
   }
 
+  await startMonitor();
+
   console.log('='.repeat(50));
   console.log('步骤 1: 生成执行计划');
   console.log('='.repeat(50));
@@ -371,12 +392,13 @@ async function cmdRun(requirement) {
 
   let plan;
   try {
-    const planner = new Planner({ project_root: executeDir });
+    const planner = new Planner({ project_root: executeDir, globalBus });
     plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
     const plansDir = path.join(__dirname, 'plans');
     await planner.savePlan(plan, filename, plansDir);
+    globalBus.emit('plan:ready', { plan });
 
     if (globalDaemon) {
       await globalDaemon.getMemory().store('semantic', {
@@ -497,13 +519,10 @@ async function executePlan(plan) {
     logger: { logDir: path.join(executeDir, '.appmaker', 'logs') }
   });
 
-  const monitor = new ProgressMonitor(engine, 8088);
-  const monitorUrl = await monitor.start();
-  console.log(`\x1b[36m🚀 已开启浮动进度看板: ${monitorUrl}\x1b[0m\n`);
+  await startMonitor();
 
-  if (process.platform === 'win32') exec(`start ${monitorUrl}`);
-  else if (process.platform === 'darwin') exec(`open ${monitorUrl}`);
-  else exec(`xdg-open ${monitorUrl}`);
+  const forwardEvents = ['milestone:start', 'milestone:done', 'task:start', 'task:done', 'task:error', 'task:review', 'task:progress', 'agent:action'];
+  forwardEvents.forEach(e => engine.on(e, data => globalBus.emit(e, data)));
 
   console.log('='.repeat(50));
   console.log(`开始执行: ${plan.project.name}`);
@@ -541,6 +560,8 @@ async function executePlan(plan) {
       priority: 2
     });
   }
+  
+  globalBus.emit('execution:done', { result, duration });
 
   if (result.summary.needs_human > 0) {
     console.log('\n\x1b[33m注意: 部分任务需要人工介入\x1b[0m');
@@ -768,11 +789,17 @@ async function cmdThink() {
   console.log('='.repeat(50) + '\n');
 
   try {
+    await startMonitor();
+    globalBus.emit('think:start', { question });
+    
     const thinker = new MultiAgentThinker({ verbose });
     
     const answer = await thinker.think(question, (msg) => {
+       globalBus.emit('think:message', { content: msg });
        console.log(`\x1b[36m[Thinker]\x1b[0m ${msg}`);
     });
+
+    globalBus.emit('think:done', { answer });
 
     console.log('\n' + '='.repeat(50));
     console.log('🌟 最终共识解答 🌟');

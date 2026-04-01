@@ -128,18 +128,23 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
       // 对话大循环，最多 5 次 tool calls
       for (let i = 0; i < 5; i++) {
+        const payload = {
+          model: this.model,
+          messages,
+          ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {})
+        };
+        
+        if (this.apiHost.includes('minimaxi.com')) {
+          payload.extra_body = { reasoning_split: true };
+        }
+
         const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            model: this.model,
-            messages,
-            tools,
-            tool_choice: 'auto'
-          }),
+          body: JSON.stringify(payload),
           signal: AbortSignal.timeout(120000)
         });
 
@@ -163,6 +168,21 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         }
         
         const message = choice.message;
+
+        // Emit Contextual Reasoning
+        if (message.reasoning_details && message.reasoning_details.length > 0) {
+          const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+          if (typeof this.emit === 'function') {
+            this.emit('action', { type: 'think', content: reasoningText.trim() });
+          }
+        } else {
+          const contentStr = message.content || "";
+          const thinkMatch = contentStr.match(/<think>([\s\S]*?)<\/think>/i);
+          if (thinkMatch && typeof this.emit === 'function') {
+             this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+          }
+        }
+        
         messages.push(message);
 
         if (message.tool_calls?.length > 0) {
@@ -177,7 +197,10 @@ export class MinimaxMCPAdapter extends AgentAdapter {
               toolResult = { content: [{ type: 'text', text: `Error: ${err.message}` }] };
             }
 
-            const textOutput = toolResult.content?.[0]?.text ?? JSON.stringify(toolResult);
+            let textOutput = toolResult.content?.[0]?.text ?? JSON.stringify(toolResult);
+            if (textOutput.length > 8000) {
+              textOutput = textOutput.substring(0, 8000) + '... (output truncated due to length)';
+            }
             messages.push({
               role: 'tool',
               name: toolCall.function.name,
@@ -219,6 +242,15 @@ export class MinimaxMCPAdapter extends AgentAdapter {
 
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
+
+    // Capture <think> block and emit to telemetry before stripping
+    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch && typeof this.emit === 'function') {
+      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+    }
+
+    // Strip <think>...</think> reasoning tags which corrupt JSON matching
+    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
     for (const match of codeBlocks) {

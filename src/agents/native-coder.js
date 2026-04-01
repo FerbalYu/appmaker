@@ -10,6 +10,8 @@
  */
 import { AgentAdapter } from './base.js';
 import { jsonrepair } from 'jsonrepair';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 const NATIVE_CODER_CONFIG = {
   name: 'native-coder',
@@ -34,49 +36,26 @@ export class NativeCoderAdapter extends AgentAdapter {
   }
 
   /**
-   * 获取工具描述供 LLM 使用
+   * 获取原生工具定义 Schema
    * @private
    */
-  _getToolsDescription() {
+  _getNativeToolsSchema() {
     const tools = this.getTools();
-    const categories = {
-      file: tools.filter(t => t.category === 'file_system').slice(0, 6),
-      bash: tools.filter(t => t.category === 'bash').slice(0, 4),
-      git: tools.filter(t => t.category === 'git'),
-      package: tools.filter(t => t.category === 'package_manager')
-    };
-
-    let desc = '';
+    const fileTools = tools.filter(t => t.category === 'file_system').slice(0, 6);
+    const bashTools = tools.filter(t => t.category === 'bash').slice(0, 4);
+    const gitTools = tools.filter(t => t.category === 'git');
+    const pkgTools = tools.filter(t => t.category === 'package_manager');
     
-    if (categories.file.length) {
-      desc += '\n【文件操作工具】\n';
-      categories.file.forEach(t => {
-        desc += `- ${t.name}: ${t.description}\n`;
-      });
-    }
+    const filteredTools = [...fileTools, ...bashTools, ...gitTools, ...pkgTools];
     
-    if (categories.bash.length) {
-      desc += '\n【命令执行工具】\n';
-      categories.bash.forEach(t => {
-        desc += `- ${t.name}: ${t.description}\n`;
-      });
-    }
-    
-    if (categories.git.length) {
-      desc += '\n【Git 工具】\n';
-      categories.git.forEach(t => {
-        desc += `- ${t.name}: ${t.description}\n`;
-      });
-    }
-    
-    if (categories.package.length) {
-      desc += '\n【包管理工具】\n';
-      categories.package.forEach(t => {
-        desc += `- ${t.name}: ${t.description}\n`;
-      });
-    }
-    
-    return desc;
+    return filteredTools.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema
+      }
+    }));
   }
 
   /**
@@ -167,15 +146,10 @@ export class NativeCoderAdapter extends AgentAdapter {
 
       const projectRoot = task.context?.project_root || '.';
       const projectContext = await this._getProjectContext(projectRoot);
-      const toolsDescription = this._getToolsDescription();
+      const toolsSchema = this._getNativeToolsSchema();
 
       const systemPrompt = `你是一个资深的 AI 全栈工程师，负责根据需求编写高质量代码。
 你工作在全自动环境，输出的代码必须能通过严格的代码审查（评审阈值 85 分）。
-
-## 可用工具
-你可以使用以下工具来完成代码编写任务：
-
-${toolsDescription}
 
 ## 重要原则
 1. 错误处理 - 所有可能失败的操作必须 try-catch，错误要记录和报告
@@ -183,28 +157,9 @@ ${toolsDescription}
 3. 安全性 - 防止 XSS、SQL 注入、命令注入等安全漏洞
 4. 代码可读性 - 使用有意义的变量名，添加必要注释
 5. 完整性 - 不要留 TODO，确保功能完整可运行
-6. 工具优先 - 优先使用上述工具进行文件操作，而不是直接输出代码
+6. 严禁 Bash 穿透写文件 - 当你要创建或更改代码、文档时，**必须且只能使用 \`write_file\` 或 \`edit_file\` 工具**。绝对禁止使用 \`bash_execute\` 执行 echo/cat 等命令输出文件，否则系统判定为你严重失职！
 
-## 输出格式要求
-当需要使用工具时，请返回以下 JSON 格式的 tool_calls：
-{
-  "tool_calls": [
-    {
-      "tool": "write_file",
-      "args": { "file_path": "src/index.js", "content": "..." }
-    }
-  ],
-  "summary": "简短的一句话描述你做了什么"
-}
-
-要求：
-- path 必须是基于项目根目录的相对路径
-- 如果需要修改多个文件，请在 tool_calls 数组中放置多个对象
-- 代码必须完整可运行，不要省略任何部分
-- 不要包含 TODO、console.log、debugger 等调试代码
-- 必须包含适当的错误处理和日志记录
-
-不包含任何 Markdown 代码块标签(\`\`\`json)或额外说明！必须是可直接反序列化的纯 JSON。`;
+你已经接入了全自动开发动作执行平台，当你需要读取/修改文件、执行命令时，请直接主动调用工具 (Tools)。请尽可能结合当前上下文环境做出符合项目技术栈的直接干预和修改！`;
 
       const userPrompt = `## 项目需求
 ${task.description}
@@ -227,67 +182,141 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
       console.log(`[${this.name}] 请求原生 API 进行编程任务... (Model: ${this.model})`);
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      let messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ];
+
+      let finalContent = '代码编写完毕。';
+      let executedCount = 0;
+      let totalTokens = 0;
+
+      for (let step = 0; step < 15; step++) {
+        const payload = {
           model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
+          messages,
+          tools: toolsSchema,
           temperature: 0.1
-        }),
-        signal: AbortSignal.timeout(200000)
-      });
+        };
+        
+        // Support for Minimax Native Reasoning Split
+        // This prevents <think> tags from disrupting tool calls or content text
+        if (this.apiHost.includes('minimaxi.com')) {
+          payload.extra_body = { reasoning_split: true };
+        }
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`API Error ${res.status}: ${errorText}`);
-      }
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(200000)
+        });
 
-      const data = await res.json();
-      
-      if (!data.choices || data.choices.length === 0) {
-        throw new Error(`API 响应结构异常: ${JSON.stringify(data).substring(0,200)}`);
-      }
-      
-      const contentStr = data.choices[0].message.content;
-      const resultObj = this._extractJSON(contentStr);
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(`API Error ${res.status}: ${errorText}`);
+        }
 
-      const filesCreated = [];
-      const filesModified = [];
+        const data = await res.json();
+        totalTokens += data.usage?.total_tokens || 0;
+        
+        if (!data.choices || data.choices.length === 0) {
+          throw new Error(`API 响应结构异常: ${JSON.stringify(data).substring(0,200)}`);
+        }
+        
+        const message = data.choices[0].message;
+        
+        // Emit Reasoning Process as Telemetry
+        if (message.reasoning_details && message.reasoning_details.length > 0) {
+          const reasoningText = message.reasoning_details.map(r => r.text).join('\n');
+          if (typeof this.emit === 'function') {
+            this.emit('action', { type: 'think', content: reasoningText.trim() });
+          }
+        } else {
+          // Fallback for non-Minimax models or if reasoning_split is not supported
+          const contentStr = message.content || "";
+          const thinkMatch = contentStr.match(/<think>([\s\S]*?)<\/think>/i);
+          if (thinkMatch && typeof this.emit === 'function') {
+             this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+          }
+        }
+        
+        messages.push(message);
 
-      if (resultObj.tool_calls && Array.isArray(resultObj.tool_calls) && projectRoot) {
-        for (const toolCall of resultObj.tool_calls) {
-          const { tool, args } = toolCall;
-          
-          if (tool === 'write_file' || tool === 'edit_file') {
-            const fileOpResult = await this.executeTool(tool, args);
-            if (fileOpResult.success) {
-              const filePath = args.file_path;
-              if (filePath) {
-                filesCreated.push(filePath);
+        const nativeToolCalls = message.tool_calls || [];
+
+        if (nativeToolCalls.length === 0) {
+          if (step === 0) {
+            this._log && this._log('INFO', `[${this.name}] ⚠️ 未检测到原生的 tool_calls。模型回复: ${message.content?.substring(0, 100)}...`);
+          }
+          finalContent = message.content || finalContent;
+          break; // 跳出大循环
+        }
+
+        if (nativeToolCalls.length > 0 && projectRoot) {
+          for (const toolCall of nativeToolCalls) {
+            executedCount++;
+            const tool = toolCall.function.name;
+            let args = {};
+            try {
+              args = JSON.parse(toolCall.function.arguments);
+            } catch (e) {
+              console.error(`[${this.name}] 解析工具调用参数失败，尝试 repair:`, toolCall.function.arguments);
+              try {
+                args = JSON.parse(jsonrepair(toolCall.function.arguments));
+              } catch (e2) {
+                console.error(`[${this.name}] Repair 解析再次失败，跳过`);
+                messages.push({
+                  role: 'tool',
+                  tool_call_id: toolCall.id,
+                  content: JSON.stringify({ success: false, error: 'Invalid arguments format JSON parse error' })
+                });
+                continue;
               }
-              console.log(`[${this.name}] 已保存文件: ${filePath}`);
             }
-          } else if (tool === 'bash_execute' || tool === 'npm_run' || tool === 'npm_install') {
-            const cmdResult = await this.executeTool(tool, args);
-            console.log(`[${this.name}] 命令执行: ${tool}`, cmdResult.success ? '✓' : '✗');
+            
+            let toolResultObj;
+            if (tool === 'write_file' || tool === 'edit_file') {
+              const fileOpResult = await this.executeTool(tool, args);
+              toolResultObj = fileOpResult;
+              if (fileOpResult.success) {
+                console.log(`[${this.name}] 已保存文件: ${args.file_path}`);
+              }
+            } else if (tool === 'bash_execute' || tool === 'npm_run' || tool === 'npm_install') {
+              const cmdResult = await this.executeTool(tool, args);
+              toolResultObj = cmdResult;
+              console.log(`[${this.name}] 命令执行: ${tool}`, cmdResult.success ? '✓' : '✗');
+            } else {
+              toolResultObj = await this.executeTool(tool, args);
+            }
+
+            let textOutput = typeof toolResultObj === 'string' ? toolResultObj : JSON.stringify(toolResultObj);
+            if (textOutput.length > 8000) {
+              textOutput = textOutput.substring(0, 8000) + '... (output truncated due to length)';
+            }
+            
+            messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: textOutput
+            });
           }
         }
       }
 
+      const { created: filesCreated, modified: filesModified } = await this._detectFileChanges(projectRoot, startTime);
+
       return this._formatResult({
         task_id: task.id,
         success: true,
-        summary: resultObj.summary || '代码已生成并写入系统。',
+        summary: finalContent,
         files_created: filesCreated,
         files_modified: filesModified,
-        tool_calls_executed: resultObj.tool_calls?.length || 0,
+        tool_calls_executed: executedCount,
+        tokens_used: totalTokens,
         duration_ms: Date.now() - startTime
       }, startTime);
 
@@ -297,8 +326,51 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
     }
   }
 
+  async _detectFileChanges(dir, startTime) {
+    const changes = { created: [], modified: [] };
+    const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.appmaker', '.daemon'];
+    
+    const scan = async (currentDir) => {
+      try {
+        const entries = await fs.readdir(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+           if (entry.isDirectory() && ignoreDirs.includes(entry.name)) continue;
+           const fullPath = path.join(currentDir, entry.name);
+           if (entry.isDirectory()) {
+             await scan(fullPath);
+           } else {
+             const stat = await fs.stat(fullPath);
+             // 允许 1000ms 时间差容错
+             if (stat.mtimeMs >= startTime - 1000) {
+                const relPath = path.relative(dir, fullPath).replace(/\\/g, '/');
+                if (stat.birthtimeMs >= startTime - 1000) {
+                  changes.created.push(relPath);
+                } else {
+                  changes.modified.push(relPath);
+                }
+             }
+           }
+        }
+      } catch (e) {
+        // 忽略错误
+      }
+    };
+    
+    await scan(dir);
+    return changes;
+  }
+
   _extractJSON(output) {
     if (typeof output !== 'string') return output;
+    
+    // Capture <think> block and emit to telemetry before stripping
+    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch && typeof this.emit === 'function') {
+      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+    }
+    
+    // Strip <think>...</think> reasoning tags which corrupt JSON matching
+    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     
     // 1. Try code blocks
     const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -309,25 +381,28 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
         } catch (e) {
           try {
             return JSON.parse(jsonrepair(match[1].trim()));
-          } catch(e2) {
-            // continue parsing next block
-          }
+          } catch(e2) {}
         }
       }
     }
     
-    // 2. Try JSON Object syntax { ... }
-    const startObj = output.indexOf('{');
-    const endObj = output.lastIndexOf('}');
-    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
-      const candidate = output.substring(startObj, endObj + 1);
-      try {
-        return JSON.parse(candidate);
-      } catch(e) {
-        try {
-          return JSON.parse(jsonrepair(candidate));
-        } catch(e2) {
-          console.warn(`[${this.name}] JSON 对象块解析失败，尝试降级处理`);
+    // 2. Try JSON Object syntaxes through brace matching
+    const braceCount = (output.match(/[{}]/g) || []).length;
+    if (braceCount >= 2) {
+      let depth = 0, validEnd = -1, firstBrace = output.indexOf('{');
+      if (firstBrace !== -1) {
+        for (let i = firstBrace; i < output.length; i++) {
+          if (output[i] === '{') depth++;
+          else if (output[i] === '}') {
+            depth--;
+            if (depth === 0) { validEnd = i; break; }
+          }
+        }
+        if (validEnd > firstBrace) {
+          const candidate = output.substring(firstBrace, validEnd + 1);
+          try { return JSON.parse(candidate); } catch(e) {
+            try { return JSON.parse(jsonrepair(candidate)); } catch {}
+          }
         }
       }
     }
@@ -339,7 +414,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
        console.warn(`[${this.name}] 全文 JSON 解析失败`);
     }
 
-    return { summary: "JSON parse failed, raw output captured.", tool_calls: [] };
+    return null;
   }
 
   _formatResult(rawResult, startTime) {
@@ -356,7 +431,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
       },
       metrics: {
         duration_ms: rawResult.duration_ms || (Date.now() - startTime),
-        tokens_used: 0
+        tokens_used: rawResult.tokens_used || 0
       },
       errors: rawResult.errors || []
     };
