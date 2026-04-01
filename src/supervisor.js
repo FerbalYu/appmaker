@@ -224,16 +224,18 @@ export class Supervisor {
     const errorRatio = errors.length / this.config.maxErrors;
     const completionRate = totalTasks > 0 ? completedTasks / totalTasks : 0;
 
+    const previousRisk = this.riskLevel;
+
     if (tokenRatio > 0.95 || errorRatio > 1.0) {
       this.riskLevel = 'CRITICAL';
       this.engine.halt = true;
-      this.logger.error('execution', 'supervisor.log', '🚨 CRITICAL risk detected - execution halted');
+      if (this.riskLevel !== previousRisk) this.logger.error('execution', 'supervisor.log', '🚨 CRITICAL risk detected - execution halted');
     } else if (tokenRatio > 0.8 || errorRatio > 0.6) {
       this.riskLevel = 'HIGH';
-      this.logger.warn('execution', 'supervisor.log', `⚠️ HIGH risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
-    } else if (tokenRatio > 0.5 || errorRatio > 0.3 || completionRate < 0.3) {
+      if (this.riskLevel !== previousRisk) this.logger.warn('execution', 'supervisor.log', `⚠️ HIGH risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
+    } else if (tokenRatio > 0.5 || errorRatio > 0.3) {
       this.riskLevel = 'MEDIUM';
-      this.logger.info('execution', 'supervisor.log', `🟡 MEDIUM risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
+      if (this.riskLevel !== previousRisk) this.logger.info('execution', 'supervisor.log', `🟡 MEDIUM risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`);
     } else {
       this.riskLevel = 'LOW';
     }

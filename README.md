@@ -10,25 +10,25 @@
 
 ## 核心特性
 
-| 特性 | 说明 |
-|------|------|
-| **全自动流程** | 需求 → 规划 → 编码 → 评审 → 修正，端到端自动化 |
-| **Multi-Agent Thinking** | 4 角色并行思考（研究员/逻辑学家/创意人/总指挥），提升推理质量 |
-| **智能工具系统** | 文件操作 / Bash 命令 / Git / 包管理器，Agent 可直接调用 |
-| **安全权限分类** | 自动评估操作风险，低风险自动放行，高风险需确认 |
-| **实时监控** | Web 仪表盘 + SSE 推送，进度一目了然 |
-| **守护进程** | 持久化状态，支持断点恢复 |
-| **沙箱测试** | `--mock` 模式模拟所有写操作，无需担心破坏环境 |
+| 特性                       | 说明                                      |
+| ------------------------ | --------------------------------------- |
+| **全自动流程**                | 需求 → 规划 → 编码 → 评审 → 修正，端到端自动化           |
+| **Multi-Agent Thinking** | 4 角色并行思考（研究员/逻辑学家/创意人/总指挥），提升推理质量       |
+| **智能工具系统**               | 文件操作 / Bash 命令 / Git / 包管理器，Agent 可直接调用 |
+| **安全权限分类**               | 自动评估操作风险，低风险自动放行，高风险需确认                 |
+| **实时监控**                 | Web 仪表盘 + SSE 推送，进度一目了然                 |
+| **守护进程**                 | 持久化状态，支持断点恢复                            |
+| **沙箱测试**                 | `--mock` 模式模拟所有写操作，无需担心破坏环境             |
 
 ---
 
 ## 环境要求
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| **Bun** | ≥ 1.0.0 | 运行时环境 |
-| **API Key** | — | MiniMax / OpenAI / Deepseek 三选一 |
-| **Python** | ≥ 3.8 | MCP 适配器需要（`uvx` 命令） |
+| 依赖          | 版本      | 说明                              |
+| ----------- | ------- | ------------------------------- |
+| **Bun**     | ≥ 1.0.0 | 运行时环境                           |
+| **API Key** | —       | MiniMax / OpenAI / Deepseek 三选一 |
+| **Python**  | ≥ 3.8   | MCP 适配器需要（`uvx` 命令）             |
 
 ### 安装 Bun
 
@@ -88,20 +88,20 @@ bun cli.js run "做一个博客系统" --dir ./my-project
 
 ## CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `bun cli.js run "<需求>"` | 全自动生成并执行（推荐） |
-| `bun cli.js plan "<需求>"` | 仅生成计划文件 |
-| `bun cli.js execute <plan.json>` | 执行已有计划 |
-| `bun cli.js health` | 检查 Agent 可用性 |
+| 命令                               | 说明           |
+| -------------------------------- | ------------ |
+| `bun cli.js run "<需求>"`          | 全自动生成并执行（推荐） |
+| `bun cli.js plan "<需求>"`         | 仅生成计划文件      |
+| `bun cli.js execute <plan.json>` | 执行已有计划       |
+| `bun cli.js health`              | 检查 Agent 可用性 |
 
-| 全局选项 | 说明 |
-|----------|------|
+| 全局选项           | 说明     |
+| -------------- | ------ |
 | `--dir <path>` | 指定工作目录 |
-| `--no-daemon` | 禁用守护进程 |
-| `--mock` | 沙箱模拟模式 |
-| `--yes` / `-y` | 跳过确认 |
-| `DEBUG=1` | 完整错误堆栈 |
+| `--no-daemon`  | 禁用守护进程 |
+| `--mock`       | 沙箱模拟模式 |
+| `--yes` / `-y` | 跳过确认   |
+| `DEBUG=1`      | 完整错误堆栈 |
 
 ---
 
@@ -135,18 +135,18 @@ flowchart LR
 
 ### 核心模块
 
-| 模块 | 文件 | 职责 |
-|------|------|------|
-| **Planner** | `src/planner.js` | 需求分析、任务分解、MCP 集成 |
-| **ExecutionEngine** | `src/engine.js` | 任务调度、评审循环、超时控制 |
-| **NativeCoder** | `src/agents/native-coder.js` | 调用大模型生成代码 |
-| **NativeReviewer** | `src/agents/native-reviewer.js` | 代码质量评审 |
-| **Supervisor** | `src/supervisor.js` | 进度追踪、风险评估 |
-| **SelfCorrector** | `src/corrector.js` | 根因分析、自动修复 |
-| **MultiAgentThinker** | `src/thinker.js` | 4 角色并行思考 |
-| **UniversalToolbox** | `src/agents/universal-toolbox.js` | 文件/Bash/Git/包管理工具 |
-| **PermissionClassifier** | `src/agents/permission-classifier.js` | 操作风险评估 |
-| **ProgressMonitor** | `src/monitor/index.js` | SSE 实时监控面板 |
+| 模块                       | 文件                                    | 职责                |
+| ------------------------ | ------------------------------------- | ----------------- |
+| **Planner**              | `src/planner.js`                      | 需求分析、任务分解、MCP 集成  |
+| **ExecutionEngine**      | `src/engine.js`                       | 任务调度、评审循环、超时控制    |
+| **NativeCoder**          | `src/agents/native-coder.js`          | 调用大模型生成代码         |
+| **NativeReviewer**       | `src/agents/native-reviewer.js`       | 代码质量评审            |
+| **Supervisor**           | `src/supervisor.js`                   | 进度追踪、风险评估         |
+| **SelfCorrector**        | `src/corrector.js`                    | 根因分析、自动修复         |
+| **MultiAgentThinker**    | `src/thinker.js`                      | 4 角色并行思考          |
+| **UniversalToolbox**     | `src/agents/universal-toolbox.js`     | 文件/Bash/Git/包管理工具 |
+| **PermissionClassifier** | `src/agents/permission-classifier.js` | 操作风险评估            |
+| **ProgressMonitor**      | `src/monitor/index.js`                | SSE 实时监控面板        |
 
 ---
 
@@ -154,22 +154,22 @@ flowchart LR
 
 Agent 通过 UniversalToolbox 获得以下能力：
 
-| 分类 | 工具 | 说明 |
-|------|------|------|
+| 分类       | 工具                                                   | 说明     |
+| -------- | ---------------------------------------------------- | ------ |
 | **文件系统** | `read_file`, `write_file`, `delete_file`, `list_dir` | 文件读写删查 |
-| **Bash** | `bash_exec`, `npm_install`, `run_tests` | 命令执行 |
-| **Git** | `git_status`, `git_commit`, `git_branch` | 版本控制 |
-| **包管理** | `check_dependency`, `find_package` | 依赖分析 |
-| **任务** | `todo_write`, `task_create`, `task_update` | 任务管理 |
+| **Bash** | `bash_exec`, `npm_install`, `run_tests`              | 命令执行   |
+| **Git**  | `git_status`, `git_commit`, `git_branch`             | 版本控制   |
+| **包管理**  | `check_dependency`, `find_package`                   | 依赖分析   |
+| **任务**   | `todo_write`, `task_create`, `task_update`           | 任务管理   |
 
 ### 权限安全
 
 PermissionClassifier 自动评估操作风险：
 
-| 风险等级 | 示例操作 | 处理方式 |
-|----------|----------|----------|
-| **低风险** | 读文件、查看目录 | 自动放行 |
-| **中风险** | 写文件、执行测试 | 日志记录 |
+| 风险等级    | 示例操作               | 处理方式  |
+| ------- | ------------------ | ----- |
+| **低风险** | 读文件、查看目录           | 自动放行  |
+| **中风险** | 写文件、执行测试           | 日志记录  |
 | **高风险** | 删除系统文件、执行 `rm -rf` | 需人工确认 |
 
 ---
@@ -226,22 +226,22 @@ const results = await dispatchParallel([
 
 执行时自动启动 Web 仪表盘：
 
-| 项目 | 说明 |
-|------|------|
-| **地址** | `http://localhost:8088`（端口冲突自动递增） |
-| **协议** | Server-Sent Events (SSE) |
-| **自动打开** | 非 Windows 自动调用浏览器 |
+| 项目       | 说明                                |
+| -------- | --------------------------------- |
+| **地址**   | `http://localhost:8088`（端口冲突自动递增） |
+| **协议**   | Server-Sent Events (SSE)          |
+| **自动打开** | 非 Windows 自动调用浏览器                 |
 
 ---
 
 ## 错误处理
 
-| 错误类型 | 严重度 | 处理 |
-|----------|--------|------|
-| 安全漏洞 / 架构违规 | 🔴 严重 | 立即停止 |
-| Token 超限 / 资源耗尽 | 🔴 严重 | 停止接受新任务 |
-| 评审失败 | 🟡 一般 | SelfCorrector 自动修正（最多 3 轮） |
-| 网络超时 | 🟡 一般 | 自动重试（最多 3 次） |
+| 错误类型            | 严重度   | 处理                         |
+| --------------- | ----- | -------------------------- |
+| 安全漏洞 / 架构违规     | 🔴 严重 | 立即停止                       |
+| Token 超限 / 资源耗尽 | 🔴 严重 | 停止接受新任务                    |
+| 评审失败            | 🟡 一般 | SelfCorrector 自动修正（最多 3 轮） |
+| 网络超时            | 🟡 一般 | 自动重试（最多 3 次）               |
 
 ---
 
@@ -295,15 +295,15 @@ appmaker/
 
 ## 技术栈
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| 运行时 | Bun 1.x | 冷启动 ~10x 提升 |
-| 模块 | ES Modules | 现代化模块系统 |
-| HTTP | `Bun.serve` / `fetch` | 零依赖 |
-| MCP | `@modelcontextprotocol/sdk` | 模型上下文协议 |
-| 规划 | MiniMax MCP (`uvx`) | 搜商增强规划 |
-| 思考 | MultiAgentThinker | 4 角色并行推理 |
-| 测试 | `bun test` | 零配置测试框架 |
+| 层级   | 技术                          | 说明          |
+| ---- | --------------------------- | ----------- |
+| 运行时  | Bun 1.x                     | 冷启动 ~10x 提升 |
+| 模块   | ES Modules                  | 现代化模块系统     |
+| HTTP | `Bun.serve` / `fetch`       | 零依赖         |
+| MCP  | `@modelcontextprotocol/sdk` | 模型上下文协议     |
+| 规划   | MiniMax MCP (`uvx`)         | 搜商增强规划      |
+| 思考   | MultiAgentThinker           | 4 角色并行推理    |
+| 测试   | `bun test`                  | 零配置测试框架     |
 
 ---
 
@@ -311,17 +311,17 @@ appmaker/
 
 ### v2.0.0 — 2026-03-31
 
-| 变更 | 说明 |
-|------|------|
-| ⚡ 迁移至 Bun | 冷启动 ~10x 提升 |
-| 📦 全量 ESM | 所有模块 `import/export` |
-| 🔧 `Bun.spawn` 替代 `cross-spawn` | 根除 Windows `EINVAL` |
-| 🌐 `fetch` 替代 `axios` | 零依赖 HTTP |
-| 🧙 MultiAgentThinker | 4 角色并行思考提升推理质量 |
-| 🔒 PermissionClassifier | 操作风险自动评估 |
-| 🧹 UniversalToolbox | 统一工具接口 |
-| 📝 --mock 模式 | 沙箱安全测试 |
-| 🗑️ 移除冗余依赖 | dotenv、cross-spawn、jest、axios |
+| 变更                              | 说明                            |
+| ------------------------------- | ----------------------------- |
+| ⚡ 迁移至 Bun                       | 冷启动 ~10x 提升                   |
+| 📦 全量 ESM                       | 所有模块 `import/export`          |
+| 🔧 `Bun.spawn` 替代 `cross-spawn` | 根除 Windows `EINVAL`           |
+| 🌐 `fetch` 替代 `axios`           | 零依赖 HTTP                      |
+| 🧙 MultiAgentThinker            | 4 角色并行思考提升推理质量                |
+| 🔒 PermissionClassifier         | 操作风险自动评估                      |
+| 🧹 UniversalToolbox             | 统一工具接口                        |
+| 📝 --mock 模式                    | 沙箱安全测试                        |
+| 🗑️ 移除冗余依赖                      | dotenv、cross-spawn、jest、axios |
 
 ---
 

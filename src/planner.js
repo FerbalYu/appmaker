@@ -248,6 +248,10 @@ export class Planner {
   _buildPlanningPrompt(requirement) {
     return `你是一个资深软件架构师，擅长将复杂需求分解为可执行的任务计划。
 
+## 任务上下文
+- 目标工作区/项目根目录路径为: ${this.projectRoot}
+- 所有的规划操作必须限定在此目录下，禁止生成任何针对此目录之外(特别是在主程序源码中)的操作。
+
 ## 任务
 深度分析以下需求，生成一个结构化的执行计划。输出必须是合法的 JSON 格式（不含 Markdown 包裹）。
 

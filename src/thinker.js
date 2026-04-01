@@ -42,7 +42,7 @@ export class MultiAgentThinker {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(120000)
+        signal: AbortSignal.timeout(600000)
       });
 
       if (!res.ok) {

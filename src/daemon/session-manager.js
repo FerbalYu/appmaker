@@ -27,8 +27,8 @@ export class SessionManager extends EventEmitter {
     this.config = {
       store: config.store,
       logger: config.logger,
-      sessionTimeout: config.sessionTimeout || 30 * 60 * 1000,
-      maxIdleTime: config.maxIdleTime || 5 * 60 * 1000,
+      sessionTimeout: config.sessionTimeout || 120 * 60 * 1000,
+      maxIdleTime: config.maxIdleTime || 30 * 60 * 1000,
       maxConcurrentSessions: config.maxConcurrentSessions || 10,
       autoCleanup: config.autoCleanup !== false,
       ...config
@@ -39,10 +39,10 @@ export class SessionManager extends EventEmitter {
     this.sessionTimers = new Map();
 
     this.logger = this.config.logger || {
-      info: () => {},
-      debug: () => {},
-      warn: () => {},
-      error: () => {}
+      info: () => { },
+      debug: () => { },
+      warn: () => { },
+      error: () => { }
     };
 
     this.stats = {
@@ -402,7 +402,7 @@ export class SessionManager extends EventEmitter {
         try {
           global.gc();
           this.logger.debug(`Cleaned up ${cleaned} sessions and executed GC.`);
-        } catch (e) {}
+        } catch (e) { }
       }
     }, this.config.sessionTimeout / 2);
 

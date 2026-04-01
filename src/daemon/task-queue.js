@@ -218,17 +218,8 @@ export class TaskQueue extends EventEmitter {
     this.logger.info(`Task started: ${task.id} (${task.name})`);
 
     try {
-      const timeoutPromise = new Promise((_, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error(`Task timeout: ${this.config.defaultTimeout}ms`));
-        }, this.config.defaultTimeout);
-        timeout.unref();
-      });
-
-      const result = await Promise.race([
-        handler(task, this),
-        timeoutPromise
-      ]);
+      // 取消任务队列层的硬性总时间超时限制，依靠具体的工具/API调用超时
+      const result = await handler(task, this);
 
       task.status = TASK_STATUS.COMPLETED;
       task.result = result;

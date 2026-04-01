@@ -304,7 +304,7 @@ async function cmdPlan(requirement) {
     const plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
-    const plansDir = path.join(__dirname, 'plans');
+    const plansDir = path.join(executeDir, '.appmaker', 'plans');
     await planner.savePlan(plan, filename, plansDir);
 
     console.log('\n生成的计划:');
@@ -322,6 +322,8 @@ async function cmdExecute(input) {
     console.log('用法: bun cli.js execute <plan.json | "需求描述">');
     process.exit(1);
   }
+
+  await startMonitor();
 
   let plan;
 
@@ -355,11 +357,11 @@ async function cmdExecute(input) {
   } else {
     console.log(`从需求生成计划: "${input}"\n`);
     try {
-      const planner = new Planner({ project_root: executeDir });
+      const planner = new Planner({ project_root: executeDir, globalBus });
       plan = await planner.plan(input);
 
       const filename = `plan_${Date.now()}.json`;
-      const plansDir = path.join(__dirname, 'plans');
+      const plansDir = path.join(executeDir, '.appmaker', 'plans');
       await planner.savePlan(plan, filename, plansDir);
     } catch (error) {
       console.error('\x1b[31mFailed to generate plan:\x1b[0m', error.message);
@@ -368,6 +370,7 @@ async function cmdExecute(input) {
     }
   }
 
+  globalBus.emit('plan:ready', { plan });
   await executePlan(plan);
 }
 
@@ -395,7 +398,7 @@ async function cmdRun(requirement) {
     plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
-    const plansDir = path.join(__dirname, 'plans');
+    const plansDir = path.join(executeDir, '.appmaker', 'plans');
     await planner.savePlan(plan, filename, plansDir);
     globalBus.emit('plan:ready', { plan });
 

@@ -254,14 +254,9 @@ export class ExecutionEngine extends EventEmitter {
    * @private
    */
   async _executeTaskWithTimeout(task, plan) {
-    const timeout = this.config.task_timeout;
-    
-    return Promise.race([
-      this._executeTask(task, plan),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error(`任务执行超时 (${timeout / 1000}s)`)), timeout)
-      )
-    ]);
+    // 移除严格的总时间超时限制，依靠底层 API 和工具自带的超时机制
+    // 允许涉及长耗时命令（如大文件处理、npm install等）的任务安全完成
+    return this._executeTask(task, plan);
   }
 
   /**

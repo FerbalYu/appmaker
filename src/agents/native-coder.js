@@ -212,7 +212,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(200000)
+          signal: AbortSignal.timeout(600000)
         });
 
         if (!res.ok) {
