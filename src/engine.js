@@ -23,8 +23,8 @@ export class ExecutionEngine extends EventEmitter {
   constructor(config = {}) {
     super();
     this.config = {
-      max_review_cycles: 10,
-      task_timeout: 300000,
+      max_review_cycles: 0,
+      task_timeout: 0,
       max_retries: 2,
       max_concurrent_tasks: 3,
       idle_timeout_ms: 1800000,
@@ -454,7 +454,7 @@ export class ExecutionEngine extends EventEmitter {
     const REVIEW_THRESHOLD = 85;
     let needsFix = reviewScore < REVIEW_THRESHOLD;
 
-    while (needsFix && cycle < this.maxReviewCycles) {
+    while (needsFix && (this.maxReviewCycles <= 0 || cycle < this.maxReviewCycles)) {
       cycle++;
       this._log('WARN', `[${task.id}] 🔄 评审 FAIL (第 ${cycle} 次修正)`);
       this._logIssues(reviewIssues);
@@ -538,7 +538,7 @@ export class ExecutionEngine extends EventEmitter {
       }
     }
 
-    if (needsFix && cycle >= this.maxReviewCycles) {
+    if (needsFix && this.maxReviewCycles > 0 && cycle >= this.maxReviewCycles) {
       this._log('ERROR', `[${task.id}] ⚠️ 超过最大修正次数 (${this.maxReviewCycles})，需人工介入`);
       this._log('WARN', `[${task.id}] 最终评分: ${reviewScore}`);
       return {

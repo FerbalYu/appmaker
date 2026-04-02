@@ -951,8 +951,8 @@ async function cmdConfig(key, value) {
   console.log('\n⚙️  配置信息:\n');
 
   const defaultConfig = {
-    max_review_cycles: 10,
-    task_timeout: 300000,
+    max_review_cycles: 0,
+    task_timeout: 0,
     max_retries: 2,
     max_concurrent_tasks: 3,
     heartbeat_interval: 30000,

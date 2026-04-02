@@ -48,7 +48,7 @@ export class AgentDispatcher {
     this.agentFactories = new Map();
     this.config = {
       max_concurrent: maxConcurrent,
-      request_timeout: 300000,
+      request_timeout: 0,
       max_retries: 2,
       retry_delay: 1000,
       enable_queue: true,
