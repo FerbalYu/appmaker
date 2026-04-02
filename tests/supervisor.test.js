@@ -2,13 +2,20 @@ const EventEmitter = require('events');
 const { Supervisor } = require('../src/supervisor');
 
 describe('Supervisor', () => {
-  it('should assess risk based on token limits', () => {
+  it('should assess risk based on error limits', () => {
     const mockEngine = new EventEmitter();
     const supervisor = new Supervisor(mockEngine, {
-      maxTokens: 100, maxErrors: 5
+      maxErrors: 5
     });
 
-    supervisor.metrics.tokens.total = 150;
+    supervisor.metrics.errors = [
+      { error: 'e1' },
+      { error: 'e2' },
+      { error: 'e3' },
+      { error: 'e4' },
+      { error: 'e5' },
+      { error: 'e6' }
+    ];
     supervisor.assessRisk();
     expect(mockEngine.halt).toBe(true);
   });

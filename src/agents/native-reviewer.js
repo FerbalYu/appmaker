@@ -31,6 +31,12 @@ export class NativeReviewerAdapter extends AgentAdapter {
       process.env.MINIMAX_API_MODEL ||
       config.model ||
       'MiniMax-Text-01';
+    this.reviewBudget = {
+      maxFiles: config.max_review_files || 12,
+      maxFileChars: config.max_review_file_chars || 8000,
+      maxTotalChars: config.max_review_total_chars || 40000,
+      maxGitDiffChars: config.max_review_git_diff_chars || 2000,
+    };
 
     if (config.project_root) {
       this.toolbox.config.workspace_root = config.project_root;
@@ -88,15 +94,27 @@ export class NativeReviewerAdapter extends AgentAdapter {
    */
   async _readFilesForReview(filePaths, projectRoot) {
     const contents = [];
+    let totalChars = 0;
 
     for (const filepath of filePaths) {
+      if (contents.length >= this.reviewBudget.maxFiles || totalChars >= this.reviewBudget.maxTotalChars) {
+        break;
+      }
       const result = await this.executeTool('read_file', { file_path: filepath });
       if (result.success) {
+        const remaining = Math.max(this.reviewBudget.maxTotalChars - totalChars, 0);
+        const perFileBudget = Math.min(this.reviewBudget.maxFileChars, remaining);
+        const rawContent = result.result.content || '';
+        const boundedContent =
+          perFileBudget > 0 ? rawContent.substring(0, perFileBudget) : '';
+        const truncated = rawContent.length > boundedContent.length;
         contents.push({
           path: filepath,
-          content: result.result.content,
+          content: boundedContent,
           size: result.result.size,
+          truncated,
         });
+        totalChars += boundedContent.length;
       }
     }
 
@@ -159,13 +177,19 @@ export class NativeReviewerAdapter extends AgentAdapter {
       }
 
       filesToRead = [...new Set(filesToRead)];
+      if (filesToRead.length > this.reviewBudget.maxFiles) {
+        filesToRead = filesToRead.slice(0, this.reviewBudget.maxFiles);
+      }
 
       if (filesToRead.length > 0) {
         const fileContents = await this._readFilesForReview(filesToRead, projectRoot);
 
           if (fileContents.length > 0) {
             codeToReview = fileContents
-              .map((f) => `--- 文件: ${f.path} (${f.size} bytes) ---\n${f.content}\n`)
+              .map(
+                (f) =>
+                  `--- 文件: ${f.path} (${f.size} bytes${f.truncated ? ', truncated' : ''}) ---\n${f.content}\n`,
+              )
               .join('\n');
             filesReviewed = fileContents.map((f) => f.path);
 
@@ -179,7 +203,7 @@ export class NativeReviewerAdapter extends AgentAdapter {
 
       const gitDiff = await this._getGitDiff(projectRoot);
       if (gitDiff) {
-        codeToReview += '\n\n--- Git Diff ---\n' + gitDiff.substring(0, 2000);
+        codeToReview += `\n\n--- Git Diff ---\n${gitDiff.substring(0, this.reviewBudget.maxGitDiffChars)}`;
       }
 
       const systemPrompt = `你是一个非常严厉的资深代码审查员。

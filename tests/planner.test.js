@@ -50,4 +50,41 @@ describe('Planner', () => {
     expect(plan.tasks.length).toBe(2);
     expect(plan.metadata.estimated_tokens).toBe(3000);
   });
+
+  it('uses rainmaker plan when requirement is empty mode', async () => {
+    planner.dispatcher.dispatch.mockResolvedValueOnce({
+      output: {
+        plan: {
+          project: { name: 'rainmaker_project', description: 'audit plan' },
+          features: ['runability', 'pitfall', 'optimization'],
+          tasks: [
+            { id: 't1', type: 'modify', description: '修复启动错误', estimated_tokens: 1200 },
+            { id: 't2', type: 'modify', description: '修复阻塞问题', estimated_tokens: 1800, dependencies: ['t1'] },
+            { id: 't3', type: 'test', description: '补充验证测试', estimated_tokens: 900, dependencies: ['t2'] }
+          ],
+          milestones: [
+            { id: 'm1', name: '先能跑', tasks: ['t1', 't2'] },
+            { id: 'm2', name: '再验证', tasks: ['t3'] }
+          ],
+          audit: {
+            runability_score: 55,
+            pitfall_score: 52,
+            optimization_score: 68,
+            findings: []
+          }
+        }
+      }
+    });
+
+    const plan = await planner.planByRainmaker({ requirement: 'auto audit' });
+
+    expect(planner.dispatcher.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: 'rainmaker',
+        type: 'analysis'
+      })
+    );
+    expect(plan.project.name).toBe('rainmaker_project');
+    expect(plan.tasks.length).toBe(3);
+  });
 });

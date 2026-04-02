@@ -6,12 +6,14 @@
 export { AgentAdapter, RESULT_FORMAT } from './base.js';
 export { NativeCoderAdapter } from './native-coder.js';
 export { NativeReviewerAdapter } from './native-reviewer.js';
+export { RainmakerAdapter } from './rainmaker.js';
 export { AgentDispatcher, TASK_TYPE_MAPPING } from './dispatcher.js';
 
 import { AgentDispatcher } from './dispatcher.js';
 import { NativeCoderAdapter } from './native-coder.js';
 import { NativeReviewerAdapter } from './native-reviewer.js';
 import { AssetScoutAdapter } from './asset-scout.js';
+import { RainmakerAdapter } from './rainmaker.js';
 import { ExecutionEngine } from '../engine.js';
 import { Planner } from '../planner.js';
 import { config } from '../../config/index.js';
@@ -48,6 +50,13 @@ export function createDispatcher(overrideConfig = {}) {
     'asset-scout',
     new AssetScoutAdapter({
       ...config.agents?.['asset-scout'],
+      ...overrideConfig,
+    }),
+  );
+  dispatcher.registerAgent(
+    'rainmaker',
+    new RainmakerAdapter({
+      ...config.agents?.rainmaker,
       ...overrideConfig,
     }),
   );

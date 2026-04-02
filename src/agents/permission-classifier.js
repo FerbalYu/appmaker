@@ -185,14 +185,18 @@ const DEFAULT_RULES = {
 
 export class PermissionClassifier {
   constructor(config = {}) {
+    const { history_file, ...restConfig } = config;
     this.config = {
       auto_allow_low_risk: true,
       auto_deny_critical: true,
       enable_ai_delegation: true,
       learn_from_history: true,
-      history_file: config.history_file || './.ncf/permission-history.jsonl',
-      ...config,
+      history_file: './.ncf/permission-history.jsonl',
+      ...restConfig,
     };
+    if (typeof history_file === 'string' && history_file.trim()) {
+      this.config.history_file = history_file;
+    }
 
     this.rules = { ...DEFAULT_RULES, ...config.custom_rules };
     this.decisionCache = new Map();
@@ -419,6 +423,9 @@ export class PermissionClassifier {
    */
   async _recordDecision(toolCall, decision) {
     try {
+      if (!this.config.history_file) {
+        return;
+      }
       const record = {
         timestamp: new Date().toISOString(),
         tool_name: toolCall.tool_name,
@@ -427,9 +434,7 @@ export class PermissionClassifier {
       };
 
       const dir = path.dirname(this.config.history_file);
-      if (!require('fs').existsSync(dir)) {
-        await fs.mkdir(dir, { recursive: true });
-      }
+      await fs.mkdir(dir, { recursive: true });
 
       await fs.appendFile(this.config.history_file, JSON.stringify(record) + '\n', 'utf-8');
     } catch (error) {

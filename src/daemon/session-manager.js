@@ -75,7 +75,7 @@ export class SessionManager extends EventEmitter {
       context: {
         workingDir: config.workingDir || process.cwd(),
         projectPath: config.projectPath,
-        env: { ...process.env },
+        env: this._sanitizeEnv(config.env || process.env),
         history: [],
         variables: {},
         metadata: config.metadata || {},
@@ -253,7 +253,7 @@ export class SessionManager extends EventEmitter {
   async close(sessionId, reason = 'normal') {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      throw new error(`Session not found: ${sessionId}`);
+      throw new Error(`Session not found: ${sessionId}`);
     }
 
     session.state = SESSION_STATE.TERMINATED;
@@ -437,6 +437,17 @@ export class SessionManager extends EventEmitter {
 
   _generateMessageId() {
     return crypto.randomBytes(8).toString('hex');
+  }
+
+  _sanitizeEnv(rawEnv = {}) {
+    const safeEnv = {};
+    const allowList = ['NODE_ENV', 'PATH', 'HOME', 'USERPROFILE', 'SHELL', 'LANG', 'TERM'];
+    for (const key of allowList) {
+      if (rawEnv[key] !== undefined) {
+        safeEnv[key] = rawEnv[key];
+      }
+    }
+    return safeEnv;
   }
 
   shutdown() {

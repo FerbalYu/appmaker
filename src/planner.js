@@ -14,6 +14,7 @@ import { AgentDispatcher } from './agents/dispatcher.js';
 import { NativeCoderAdapter } from './agents/native-coder.js';
 import { MinimaxMCPAdapter } from './agents/minimax-mcp.js';
 import { AssetScoutAdapter } from './agents/asset-scout.js';
+import { RainmakerAdapter } from './agents/rainmaker.js';
 import { UniversalToolbox } from './agents/universal-toolbox.js';
 import { config } from '../config/index.js';
 import { jsonrepair } from 'jsonrepair';
@@ -24,7 +25,6 @@ export class Planner {
     this.config = {
       max_tasks_per_milestone: 5,
       max_total_tasks: 20,
-      token_budget: 30000,
       ...config,
       ...configOverrides,
     };
@@ -53,6 +53,13 @@ export class Planner {
       'asset-scout',
       new AssetScoutAdapter({
         ...this.config.agents?.['asset-scout'],
+        ...configOverrides,
+      }),
+    );
+    this.dispatcher.registerAgent(
+      'rainmaker',
+      new RainmakerAdapter({
+        ...this.config.agents?.rainmaker,
         ...configOverrides,
       }),
     );
@@ -219,7 +226,6 @@ export class Planner {
               planning_config: {
                 max_tasks: this.config.max_total_tasks,
                 max_per_milestone: this.config.max_tasks_per_milestone,
-                token_budget: this.config.token_budget,
               },
             },
           });
@@ -263,6 +269,51 @@ export class Planner {
           return this._generateFallbackPlan(requirement);
         }
       }
+    }
+  }
+
+  async planByRainmaker(options = {}) {
+    const fallbackRequirement = options.requirement || `对项目 ${this.projectRoot} 做全局巡检并生成修复计划`;
+    console.log('[Planner] 🌧️ Rainmaker 模式启动：正在对项目做全局巡检...');
+
+    try {
+      const result = await this.dispatcher.dispatch({
+        id: 'rainmaker_audit',
+        type: 'analysis',
+        agent: 'rainmaker',
+        description: fallbackRequirement,
+        context: {
+          project_root: this.projectRoot,
+        },
+      });
+
+      const rawPlan =
+        result?.output?.plan ||
+        this._extractJSON(
+          result?.output?.raw_output || result?.output?.summary || result?.result || String(result),
+        );
+
+      const normalized = rawPlan?.plan ? rawPlan.plan : rawPlan;
+      const finalizedPlan = this._finalizePlan(normalized, fallbackRequirement);
+
+      if (!finalizedPlan.tasks || finalizedPlan.tasks.length === 0) {
+        throw new Error('Rainmaker 输出为空任务');
+      }
+
+      if (rawPlan?.audit) {
+        finalizedPlan.audit = rawPlan.audit;
+      }
+      if (rawPlan?.features && Array.isArray(rawPlan.features)) {
+        finalizedPlan.features = this._validateFeatures(rawPlan.features);
+      }
+
+      console.log(
+        `[Planner] ✅ Rainmaker 计划生成成功: ${finalizedPlan.tasks.length} 任务 / ${finalizedPlan.milestones.length} 里程碑`,
+      );
+      return finalizedPlan;
+    } catch (error) {
+      console.log(`[Planner] ⚠️ Rainmaker 失败，回退规则规划: ${error.message}`);
+      return this._generateFallbackPlan(fallbackRequirement);
     }
   }
 

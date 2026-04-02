@@ -5,7 +5,7 @@
  * - 智能重试机制（网络错误自动重试）
  * - 任务超时控制（防止无限等待）
  * - 动态并行调度（根据依赖关系优化并发）
- * - 资源预算管理（token 消耗追踪）
+ * - Token 消耗追踪
  * - 多层次检查点（里程碑 + 手动）
  */
 
@@ -27,8 +27,9 @@ export class ExecutionEngine extends EventEmitter {
       task_timeout: 300000,
       max_retries: 2,
       max_concurrent_tasks: 3,
-      token_budget: 50000000,
       idle_timeout_ms: 1800000,
+      enable_idle_abort: false,
+      heartbeat_check_interval_ms: 10000,
       ...config,
     };
 
@@ -48,6 +49,7 @@ export class ExecutionEngine extends EventEmitter {
       native_coder_model: config.native_coder_model || 'MiniMax-Text-01',
       request_timeout: this.config.task_timeout,
       max_retries: this.config.max_retries,
+      workspace_root: this.projectRoot,
     });
 
     this.dispatcher.registerAgent('native-reviewer', () => {
@@ -83,7 +85,7 @@ export class ExecutionEngine extends EventEmitter {
     this._log('INFO', `🚀 开始执行计划: ${plan.project.name}`);
     this._log(
       'INFO',
-      `📋 总任务数: ${plan.tasks.length} | Token 预算: ${this.config.token_budget}`,
+      `📋 总任务数: ${plan.tasks.length}`,
     );
 
     const results = [];
@@ -127,7 +129,7 @@ export class ExecutionEngine extends EventEmitter {
       'INFO',
       `   成功: ${summary.done} | 失败: ${summary.failed} | 需人工: ${summary.needs_human}`,
     );
-    this._log('INFO', `   Token 消耗: ${this.tokenUsage.total} / ${this.config.token_budget}`);
+    this._log('INFO', `   Token 消耗: ${this.tokenUsage.total}`);
     this._log('INFO', `   总耗时: ${Math.round(summary.duration_ms / 1000)}s`);
     this._log('INFO', `${'═'.repeat(50)}`);
 
@@ -275,9 +277,17 @@ export class ExecutionEngine extends EventEmitter {
    * @private
    */
   async _executeTaskWithTimeout(task, plan) {
-    // 移除严格的总时间超时限制，依靠底层 API 和工具自带的超时机制
-    // 允许涉及长耗时命令（如大文件处理、npm install等）的任务安全完成
-    return this._executeTask(task, plan);
+    if (!this.config.task_timeout || this.config.task_timeout <= 0) {
+      return this._executeTask(task, plan);
+    }
+    return Promise.race([
+      this._executeTask(task, plan),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Task timeout after ${this.config.task_timeout}ms`));
+        }, this.config.task_timeout);
+      }),
+    ]);
   }
 
   /**
@@ -286,18 +296,13 @@ export class ExecutionEngine extends EventEmitter {
    */
   _trackTokenUsage(result) {
     const codeTokens = result.code_result?.metrics?.tokens_used || 0;
-    const reviewTokens = result.review_result?.output?.metrics?.tokens_used || 0;
+    const reviewTokens = result.review_result?.metrics?.tokens_used || result.review_result?.output?.metrics?.tokens_used || 0;
 
     this.tokenUsage.total += codeTokens + reviewTokens;
     this.tokenUsage.byAgent['native-coder'] =
       (this.tokenUsage.byAgent['native-coder'] || 0) + codeTokens;
     this.tokenUsage.byAgent['native-reviewer'] =
       (this.tokenUsage.byAgent['native-reviewer'] || 0) + reviewTokens;
-
-    if (this.tokenUsage.total > this.config.token_budget) {
-      // Just emit warning, do NOT halt
-      this.emit('budget:exceeded', { usage: this.tokenUsage, budget: this.config.token_budget });
-    }
   }
 
   /**
@@ -409,11 +414,11 @@ export class ExecutionEngine extends EventEmitter {
       return { task_id: task.id, status: 'failed', phase: 'review', error: 'Review agent failed' };
     }
 
-    const reviewScore = reviewResult.output?.score ?? 100;
-    const reviewIssues = reviewResult.output?.issues || [];
-    const reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
+    let reviewScore = reviewResult.output?.score ?? 100;
+    let reviewIssues = reviewResult.output?.issues || [];
+    let reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
     const REVIEW_THRESHOLD = 85;
-    const needsFix = reviewScore < REVIEW_THRESHOLD;
+    let needsFix = reviewScore < REVIEW_THRESHOLD;
 
     while (needsFix && cycle < this.maxReviewCycles) {
       cycle++;
@@ -455,17 +460,27 @@ export class ExecutionEngine extends EventEmitter {
         };
       }
 
-      reviewResult = await this.dispatcher.dispatch({
-        id: `review_${task.id}_${cycle}`,
-        type: 'review',
-        description: `重新评审: ${task.description}`,
-        subtasks: task.subtasks || [],
-        files: [
-          ...(codeResult.output?.files_created || []),
-          ...(codeResult.output?.files_modified || []),
-        ],
-        context,
-      });
+      reviewResult = await this._executeWithRetry(
+        async () => {
+          return this.dispatcher.dispatch({
+            id: `review_${task.id}_${cycle}`,
+            type: 'review',
+            description: `重新评审: ${task.description}`,
+            subtasks: task.subtasks || [],
+            files: [
+              ...(codeResult.output?.files_created || []),
+              ...(codeResult.output?.files_modified || []),
+            ],
+            context,
+          });
+        },
+        {
+          maxRetries: this.config.max_retries,
+          taskId: task.id,
+          phase: 're-review',
+          context,
+        },
+      );
 
       if (!reviewResult) {
         this._log('ERROR', `[${task.id}] ❌ 重新评审失败`);
@@ -479,6 +494,10 @@ export class ExecutionEngine extends EventEmitter {
       }
 
       const newScore = reviewResult.output?.score ?? 100;
+      reviewScore = newScore;
+      reviewIssues = reviewResult.output?.issues || [];
+      reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
+      needsFix = reviewScore < REVIEW_THRESHOLD;
       if (newScore >= REVIEW_THRESHOLD) {
         this._log('INFO', `[${task.id}] ✅ 修正后评分提升至 ${newScore}`);
         break;
@@ -535,15 +554,17 @@ export class ExecutionEngine extends EventEmitter {
       };
       this.on('agent:action', onAction);
 
-      const heartbeatInterval = setInterval(() => {
-        if (Date.now() - lastActionTime > this.config.idle_timeout_ms) {
-          this._log(
-            'ERROR',
-            `[${taskId}] ⚠️ Agent 发呆超过 ${this.config.idle_timeout_ms / 1000}s, 触发心跳打断...`,
-          );
-          abortController.abort(new Error('STALLED_HEARTBEAT'));
-        }
-      }, 10000);
+      const heartbeatInterval = this.config.enable_idle_abort
+        ? setInterval(() => {
+            if (Date.now() - lastActionTime > this.config.idle_timeout_ms) {
+              this._log(
+                'ERROR',
+                `[${taskId}] ⚠️ Agent 发呆超过 ${this.config.idle_timeout_ms / 1000}s, 触发心跳打断...`,
+              );
+              abortController.abort(new Error('STALLED_HEARTBEAT'));
+            }
+          }, this.config.heartbeat_check_interval_ms)
+        : null;
 
       try {
         const result = await fn();
@@ -601,7 +622,9 @@ export class ExecutionEngine extends EventEmitter {
           return { success: false, error: lastError.message, status: 'failed' };
         }
       } finally {
-        clearInterval(heartbeatInterval);
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+        }
         this.off('agent:action', onAction);
       }
     }

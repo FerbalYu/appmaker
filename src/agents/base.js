@@ -20,6 +20,7 @@ export class AgentAdapter extends EventEmitter {
     this.name = config.name;
     this.type = config.type;
     this.capabilities = config.capabilities || [];
+    this.permissionClassifier = config.permission_classifier || null;
 
     this._initToolbox(config);
   }
@@ -79,13 +80,53 @@ export class AgentAdapter extends EventEmitter {
    */
   async executeTool(toolName, args = {}, toolCallId = null) {
     const id = toolCallId || `tc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    this.emit('action', { 
-      type: 'tool_start', 
+    this.emit('action', {
+      type: 'tool_start',
       toolCallId: id,
-      tool: toolName, 
+      tool: toolName,
       args,
       content: '⏳ 工具执行中...'
     });
+
+    const toolCall = { tool_name: toolName, arguments: args };
+    if (this.permissionClassifier) {
+      const classification = await this.permissionClassifier.classify(toolCall);
+      if (classification.decision === 'auto_deny') {
+        const deniedResult = {
+          success: false,
+          tool: toolName,
+          denied: true,
+          reason: 'Risk level too high, auto denied',
+          risk_level: classification.risk_level,
+        };
+        this.emit('action', {
+          type: 'tool_result_update',
+          toolCallId: id,
+          tool: toolName,
+          success: false,
+          content: JSON.stringify(deniedResult, null, 2),
+        });
+        return deniedResult;
+      }
+
+      if (classification.decision === 'need_confirm') {
+        const confirmResult = {
+          success: false,
+          tool: toolName,
+          needs_confirmation: true,
+          reason: 'Medium risk, requires confirmation',
+          risk_level: classification.risk_level,
+        };
+        this.emit('action', {
+          type: 'tool_result_update',
+          toolCallId: id,
+          tool: toolName,
+          success: false,
+          content: JSON.stringify(confirmResult, null, 2),
+        });
+        return confirmResult;
+      }
+    }
 
     const cacheKey = `${toolName}:${JSON.stringify(args)}`;
 
@@ -93,7 +134,7 @@ export class AgentAdapter extends EventEmitter {
       const result = this._toolCache.get(cacheKey);
       let textOutput = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
       if (textOutput.length > 8000) textOutput = textOutput.substring(0, 8000) + '... (output truncated)';
-      
+
       this.emit('action', {
         type: 'tool_result_update',
         toolCallId: id,
@@ -124,6 +165,10 @@ export class AgentAdapter extends EventEmitter {
     });
 
     return result;
+  }
+
+  setPermissionClassifier(permissionClassifier) {
+    this.permissionClassifier = permissionClassifier;
   }
 
   /**

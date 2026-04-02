@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll } from 'bun:test';
 import { AgentDispatcher } from '../src/agents/dispatcher.js';
 import { PermissionClassifier, PermissionLevel, RiskLevel } from '../src/agents/permission-classifier.js';
 import { UniversalToolbox } from '../src/agents/universal-toolbox.js';
+import { AgentAdapter } from '../src/agents/base.js';
 
 describe('PermissionClassifier', () => {
   let classifier;
@@ -120,6 +121,12 @@ describe('UniversalToolbox', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('not found');
   });
+
+  test('should block workspace escape path', async () => {
+    const result = await toolbox.execute('read_file', { file_path: '../package.json' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('escapes workspace');
+  });
 });
 
 describe('AgentDispatcher with Toolbox Integration', () => {
@@ -181,5 +188,37 @@ describe('AgentDispatcher with Toolbox Integration', () => {
     } catch {
       // Ignore cleanup errors in test
     }
+  });
+
+  test('should enforce permission classifier in agent tool path', async () => {
+    class MockAgent extends AgentAdapter {
+      constructor() {
+        super({
+          name: 'mock-agent',
+          type: 'test',
+          workspace_root: process.cwd(),
+        });
+      }
+
+      async execute() {
+        return this.executeTool('bash_execute', { command: 'rm -rf /' });
+      }
+
+      async healthCheck() {
+        return true;
+      }
+    }
+
+    const secureDispatcher = new AgentDispatcher({ workspace_root: process.cwd() });
+    secureDispatcher.registerAgent('mock-agent', () => new MockAgent());
+    const result = await secureDispatcher.dispatch({
+      id: 'mock-task',
+      type: 'analysis',
+      description: 'security check',
+      agent: 'mock-agent',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.denied).toBe(true);
   });
 });

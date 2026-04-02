@@ -25,10 +25,10 @@ export class Supervisor {
     });
 
     this.config = {
-      maxTokens: 50000000,
       maxErrors: 5,
       maxReviewCycles: 10,
       riskCheckInterval: 10000,
+      enableQualityCorrection: false,
       ...config,
     };
 
@@ -61,7 +61,6 @@ export class Supervisor {
     this.engine.on('milestone:start', (data) => this._onMilestoneStart(data));
     this.engine.on('milestone:done', (data) => this._onMilestoneDone(data));
     this.engine.on('plan:done', (data) => this._onPlanDone(data));
-    this.engine.on('budget:exceeded', (data) => this._onBudgetExceeded(data));
   }
 
   /**
@@ -153,7 +152,7 @@ export class Supervisor {
     }
 
     const codeTokens = result.code_result?.metrics?.tokens_used || 0;
-    const reviewTokens = result.review_result?.output?.metrics?.tokens_used || 0;
+    const reviewTokens = result.review_result?.metrics?.tokens_used || result.review_result?.output?.metrics?.tokens_used || 0;
     this.metrics.tokens.coder += codeTokens;
     this.metrics.tokens.reviewer += reviewTokens;
     this.metrics.tokens.total += codeTokens + reviewTokens;
@@ -192,11 +191,13 @@ export class Supervisor {
         `⚠️ Low review score for ${task.id} (${result.output?.score} < ${REVIEW_THRESHOLD})`,
         { score: result.output?.score },
       );
-      this.triggerCorrection('quality_low', {
-        task,
-        score: result.output?.score,
-        issues: result.output?.issues || [],
-      });
+      if (this.config.enableQualityCorrection) {
+        this.triggerCorrection('quality_low', {
+          task,
+          score: result.output?.score,
+          issues: result.output?.issues || [],
+        });
+      }
     }
   }
 
@@ -235,15 +236,6 @@ export class Supervisor {
     this._emitFinalReport(summary);
   }
 
-  _onBudgetExceeded({ usage, budget }) {
-    this.logger.error(
-      'execution',
-      'supervisor.log',
-      `💸 Token budget exceeded! (${usage.total}/${budget})`,
-    );
-    this.riskLevel = 'CRITICAL';
-  }
-
   /**
    * 评估当前风险等级
    */
@@ -252,13 +244,12 @@ export class Supervisor {
     const totalTasks = Object.keys(tasks).length;
     const completedTasks = Object.values(tasks).filter((t) => t.status === 'done').length;
 
-    const tokenRatio = tokens.total / this.config.maxTokens;
     const errorRatio = errors.length / this.config.maxErrors;
     const completionRate = totalTasks > 0 ? completedTasks / totalTasks : 0;
 
     const previousRisk = this.riskLevel;
 
-    if (tokenRatio > 0.95 || errorRatio > 1.0) {
+    if (errorRatio > 1.0) {
       this.riskLevel = 'CRITICAL';
       this.engine.halt = true;
       if (this.riskLevel !== previousRisk)
@@ -267,21 +258,21 @@ export class Supervisor {
           'supervisor.log',
           '🚨 CRITICAL risk detected - execution halted',
         );
-    } else if (tokenRatio > 0.8 || errorRatio > 0.6) {
+    } else if (errorRatio > 0.6) {
       this.riskLevel = 'HIGH';
       if (this.riskLevel !== previousRisk)
         this.logger.warn(
           'execution',
           'supervisor.log',
-          `⚠️ HIGH risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`,
+          `⚠️ HIGH risk - Errors: ${errors.length}`,
         );
-    } else if (tokenRatio > 0.5 || errorRatio > 0.3) {
+    } else if (errorRatio > 0.3) {
       this.riskLevel = 'MEDIUM';
       if (this.riskLevel !== previousRisk)
         this.logger.info(
           'execution',
           'supervisor.log',
-          `🟡 MEDIUM risk - Tokens: ${Math.round(tokenRatio * 100)}%, Errors: ${errors.length}`,
+          `🟡 MEDIUM risk - Errors: ${errors.length}`,
         );
     } else {
       this.riskLevel = 'LOW';
@@ -387,9 +378,7 @@ export class Supervisor {
     console.log(`${'='.repeat(60)}`);
     console.log(`风险等级: ${riskIcon} ${this.riskLevel}`);
     console.log(`任务进度: ${completedTasks}/${totalTasks} 完成, ${failedTasks} 失败`);
-    console.log(
-      `Token 消耗: ${tokens.total} / ${this.config.maxTokens} (${Math.round((tokens.total / this.config.maxTokens) * 100)}%)`,
-    );
+    console.log(`Token 消耗: ${tokens.total}`);
     console.log(`错误累积: ${errors.length} / ${this.config.maxErrors}`);
     console.log(`${'='.repeat(60)}\n`);
   }

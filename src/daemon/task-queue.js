@@ -469,10 +469,10 @@ export class TaskQueue extends EventEmitter {
 
   _startCleanupTimer() {
     this.cleanupTimer = setInterval(async () => {
-      const oldTasks = this.list({
-        status: TASK_STATUS.COMPLETED,
-        since: Date.now() - 24 * 60 * 60 * 1000,
-      });
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const oldTasks = this.list({ status: TASK_STATUS.COMPLETED }).filter(
+        (task) => (task.timing.completed || 0) <= cutoff,
+      );
 
       for (const task of oldTasks) {
         this.tasks.delete(task.id);

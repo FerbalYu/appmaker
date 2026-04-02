@@ -151,6 +151,38 @@ export class UniversalToolbox {
     this._registerAllTools();
   }
 
+  _getWorkspaceRoot() {
+    return path.resolve(this.config.workspace_root || process.cwd());
+  }
+
+  _isWithinWorkspace(rootPath, targetPath) {
+    const root = path.normalize(rootPath);
+    const target = path.normalize(targetPath);
+    const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root;
+    const normalizedTarget = process.platform === 'win32' ? target.toLowerCase() : target;
+    const relative = path.relative(normalizedRoot, normalizedTarget);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+
+  _resolvePathInWorkspace(inputPath, fieldName = 'path') {
+    if (typeof inputPath !== 'string' || inputPath.trim() === '') {
+      throw new Error(`${fieldName} must be a non-empty string`);
+    }
+    const workspaceRoot = this._getWorkspaceRoot();
+    const fullPath = path.resolve(workspaceRoot, inputPath);
+    if (!this._isWithinWorkspace(workspaceRoot, fullPath)) {
+      throw new Error(`${fieldName} escapes workspace`);
+    }
+    return fullPath;
+  }
+
+  _resolveCwdInWorkspace(cwd) {
+    if (!cwd) {
+      return this._getWorkspaceRoot();
+    }
+    return this._resolvePathInWorkspace(cwd, 'cwd');
+  }
+
   _registerAllTools() {
     this._registerFileTools();
     this._registerBashTools();
@@ -227,7 +259,7 @@ export class UniversalToolbox {
         required: ['file_path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         const content = await fs.readFile(fullPath, 'utf-8');
         return { file_path: args.file_path, content, size: content.length };
       },
@@ -247,7 +279,7 @@ export class UniversalToolbox {
       async (args) => {
         const results = [];
         for (const fp of args.file_paths) {
-          const fullPath = path.resolve(this.config.workspace_root, fp);
+          const fullPath = this._resolvePathInWorkspace(fp, 'file_paths');
           try {
             const content = await fs.readFile(fullPath, 'utf-8');
             results.push({ file_path: fp, content, size: content.length, success: true });
@@ -273,7 +305,7 @@ export class UniversalToolbox {
         required: ['file_path', 'content'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         const dir = path.dirname(fullPath);
         await fs.mkdir(dir, { recursive: true });
         if (args.append) {
@@ -298,7 +330,7 @@ export class UniversalToolbox {
         required: ['dir_path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.dir_path);
+        const fullPath = this._resolvePathInWorkspace(args.dir_path, 'dir_path');
         await fs.mkdir(fullPath, { recursive: args.recursive !== false });
         return { dir_path: args.dir_path, created: true };
       },
@@ -317,7 +349,7 @@ export class UniversalToolbox {
         required: ['path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.path);
+        const fullPath = this._resolvePathInWorkspace(args.path, 'path');
         const stat = await fs.stat(fullPath);
         if (stat.isDirectory()) {
           await fs.rm(fullPath, { recursive: args.recursive });
@@ -341,8 +373,8 @@ export class UniversalToolbox {
         required: ['source', 'destination'],
       },
       async (args) => {
-        const src = path.resolve(this.config.workspace_root, args.source);
-        const dest = path.resolve(this.config.workspace_root, args.destination);
+        const src = this._resolvePathInWorkspace(args.source, 'source');
+        const dest = this._resolvePathInWorkspace(args.destination, 'destination');
         await fs.rename(src, dest);
         return { source: args.source, destination: args.destination, moved: true };
       },
@@ -361,8 +393,8 @@ export class UniversalToolbox {
         required: ['source', 'destination'],
       },
       async (args) => {
-        const src = path.resolve(this.config.workspace_root, args.source);
-        const dest = path.resolve(this.config.workspace_root, args.destination);
+        const src = this._resolvePathInWorkspace(args.source, 'source');
+        const dest = this._resolvePathInWorkspace(args.destination, 'destination');
         const stat = await fs.stat(src);
         if (stat.isDirectory()) {
           await copyDir(src, dest);
@@ -385,7 +417,7 @@ export class UniversalToolbox {
         },
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.dir_path || '.');
+        const fullPath = this._resolvePathInWorkspace(args.dir_path || '.', 'dir_path');
         const entries = await fs.readdir(fullPath, { withFileTypes: true });
         const items = entries
           .filter((e) => args.include_hidden || !e.name.startsWith('.'))
@@ -410,7 +442,7 @@ export class UniversalToolbox {
         required: ['path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.path);
+        const fullPath = this._resolvePathInWorkspace(args.path, 'path');
         try {
           await fs.access(fullPath);
           return { path: args.path, exists: true };
@@ -432,7 +464,7 @@ export class UniversalToolbox {
         required: ['path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.path);
+        const fullPath = this._resolvePathInWorkspace(args.path, 'path');
         const stat = await fs.stat(fullPath);
         return {
           path: args.path,
@@ -461,14 +493,14 @@ export class UniversalToolbox {
       },
       async (args) => {
         const results = [];
-        const searchDir = path.resolve(this.config.workspace_root, args.dir_path || '.');
+        const searchDir = this._resolvePathInWorkspace(args.dir_path || '.', 'dir_path');
         await searchInDir(
           searchDir,
           args.pattern,
           args.file_pattern,
           args.case_sensitive,
           results,
-          this.config.workspace_root,
+          this._getWorkspaceRoot(),
         );
         return { pattern: args.pattern, matches: results, count: results.length };
       },
@@ -488,7 +520,7 @@ export class UniversalToolbox {
       },
       async (args) => {
         const { glob } = await import('glob');
-        const searchPath = path.resolve(this.config.workspace_root, args.dir_path || '.');
+        const searchPath = this._resolvePathInWorkspace(args.dir_path || '.', 'dir_path');
         const matches = await glob(args.pattern, { cwd: searchPath });
         return { pattern: args.pattern, matches, count: matches.length };
       },
@@ -511,9 +543,7 @@ export class UniversalToolbox {
       },
       async (args) => {
         return new Promise((resolve) => {
-          const cwd = args.cwd
-            ? path.resolve(this.config.workspace_root, args.cwd)
-            : this.config.workspace_root;
+          const cwd = this._resolveCwdInWorkspace(args.cwd);
           exec(
             args.command,
             {
@@ -548,7 +578,7 @@ export class UniversalToolbox {
         required: ['script_path'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.script_path);
+        const fullPath = this._resolvePathInWorkspace(args.script_path, 'script_path');
         const scriptArgs = (args.args || []).join(' ');
         return this.execute('bash_execute', { command: `bash "${fullPath}" ${scriptArgs}` });
       },
@@ -584,9 +614,7 @@ export class UniversalToolbox {
         required: ['command'],
       },
       async (args) => {
-        const cwd = args.cwd
-          ? path.resolve(this.config.workspace_root, args.cwd)
-          : this.config.workspace_root;
+        const cwd = this._resolveCwdInWorkspace(args.cwd);
         const proc = spawn(args.command, [], { cwd, shell: true, detached: true });
         const pid = proc.pid;
         this.bashProcesses.set(pid, proc);
@@ -628,10 +656,12 @@ export class UniversalToolbox {
         },
       },
       async (args) => {
-        const filter = args.filter ? ` | grep "${args.filter}"` : '';
-        const result = await this.execute('bash_execute', {
-          command: `ps aux${filter} | head -20`,
-        });
+        const filter = args.filter || '';
+        const command =
+          process.platform === 'win32'
+            ? `powershell -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,WS | Format-Table -AutoSize"`
+            : `ps aux${filter ? ` | grep "${filter}"` : ''} | head -20`;
+        const result = await this.execute('bash_execute', { command });
         return result;
       },
     );
@@ -672,9 +702,7 @@ export class UniversalToolbox {
       },
       async (args) => {
         return new Promise((resolve) => {
-          const cwd = args.cwd
-            ? path.resolve(this.config.workspace_root, args.cwd)
-            : this.config.workspace_root;
+          const cwd = this._resolveCwdInWorkspace(args.cwd);
           const outputs = { stdout: '', stderr: '' };
           const proc = spawn(args.command, [], { cwd, shell: true });
 
@@ -973,7 +1001,7 @@ export class UniversalToolbox {
         required: ['url', 'dest'],
       },
       async (args) => {
-        const destPath = path.resolve(this.config.workspace_root, args.dest);
+        const destPath = this._resolvePathInWorkspace(args.dest, 'dest');
         await fs.mkdir(path.dirname(destPath), { recursive: true });
         const file = await fs.open(destPath, 'w');
 
@@ -1081,7 +1109,7 @@ export class UniversalToolbox {
         required: ['file_path', 'content', 'after_line'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         const lines = (await fs.readFile(fullPath, 'utf-8')).split('\n');
         lines.splice(args.after_line, 0, args.content);
         await fs.writeFile(fullPath, lines.join('\n'), 'utf-8');
@@ -1103,7 +1131,7 @@ export class UniversalToolbox {
         required: ['file_path', 'start_line', 'end_line'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         const lines = (await fs.readFile(fullPath, 'utf-8')).split('\n');
         lines.splice(args.start_line - 1, args.end_line - args.start_line + 1);
         await fs.writeFile(fullPath, lines.join('\n'), 'utf-8');
@@ -1126,7 +1154,7 @@ export class UniversalToolbox {
         required: ['file_path', 'search', 'replace'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         let content = await fs.readFile(fullPath, 'utf-8');
         const regex = new RegExp(args.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
         const matches = content.match(regex);
@@ -1156,7 +1184,7 @@ export class UniversalToolbox {
       async (args) => {
         return this.lspRequest(args.language_server, 'textDocument/hover', {
           textDocument: {
-            uri: `file://${path.resolve(this.config.workspace_root, args.file_path)}`,
+            uri: `file://${this._resolvePathInWorkspace(args.file_path, 'file_path')}`,
           },
           position: { line: args.line, character: args.character },
         });
@@ -1180,7 +1208,7 @@ export class UniversalToolbox {
       async (args) => {
         return this.lspRequest(args.language_server, 'textDocument/definition', {
           textDocument: {
-            uri: `file://${path.resolve(this.config.workspace_root, args.file_path)}`,
+            uri: `file://${this._resolvePathInWorkspace(args.file_path, 'file_path')}`,
           },
           position: { line: args.line, character: args.character },
         });
@@ -1202,7 +1230,7 @@ export class UniversalToolbox {
       async (args) => {
         return this.lspRequest(args.language_server, 'textDocument/diagnostic', {
           textDocument: {
-            uri: `file://${path.resolve(this.config.workspace_root, args.file_path)}`,
+            uri: `file://${this._resolvePathInWorkspace(args.file_path, 'file_path')}`,
           },
         });
       },
@@ -1968,7 +1996,7 @@ export class UniversalToolbox {
         required: ['file_path', 'cell_index', 'content'],
       },
       async (args) => {
-        const fullPath = path.resolve(this.config.workspace_root, args.file_path);
+        const fullPath = this._resolvePathInWorkspace(args.file_path, 'file_path');
         let notebook;
         try {
           const content = await fs.readFile(fullPath, 'utf-8');
@@ -2011,9 +2039,7 @@ export class UniversalToolbox {
       },
       async (args) => {
         return new Promise((resolve) => {
-          const cwd = args.cwd
-            ? path.resolve(this.config.workspace_root, args.cwd)
-            : this.config.workspace_root;
+          const cwd = this._resolveCwdInWorkspace(args.cwd);
           const psCommand = args.command.includes('powershell')
             ? args.command
             : `powershell -Command "${args.command.replace(/"/g, '\\"')}"`;

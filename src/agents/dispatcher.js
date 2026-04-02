@@ -39,10 +39,15 @@ export const TASK_TYPE_MAPPING = {
 
 export class AgentDispatcher {
   constructor(config = {}) {
+    const maxConcurrent = Number.isFinite(config.max_concurrent)
+      ? config.max_concurrent
+      : Number.isFinite(config.max_concurrent_agents)
+        ? config.max_concurrent_agents
+        : 3;
     this.agents = new Map();
     this.agentFactories = new Map();
     this.config = {
-      max_concurrent: 3,
+      max_concurrent: maxConcurrent,
       request_timeout: 300000,
       max_retries: 2,
       retry_delay: 1000,
@@ -118,6 +123,9 @@ export class AgentDispatcher {
       this._updateAgentMetrics(agentType, 'start');
 
       agentInstance = factory();
+      if (agentInstance && typeof agentInstance.setPermissionClassifier === 'function') {
+        agentInstance.setPermissionClassifier(this.permissionClassifier);
+      }
 
       const result = await this._executeWithTimeout(
         agentInstance.execute(enrichedTask),
@@ -157,9 +165,17 @@ export class AgentDispatcher {
    * @private
    */
   async _executeWithTimeout(promise, timeout, agentType, taskId) {
-    // 根据需求，取消 task 总时间超时，将其放宽为由各个 API 或工具自身的超时来阻断
-    // 否则过长的 npm install 或复杂的多步推理会被中途强杀
-    return promise;
+    if (!timeout || timeout <= 0) {
+      return promise;
+    }
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`[${agentType}] Task ${taskId} timeout after ${timeout}ms`));
+        }, timeout);
+      }),
+    ]);
   }
 
   /**
@@ -307,7 +323,10 @@ export class AgentDispatcher {
     const metrics = this.taskMetrics.get(agentType);
     if (!metrics) return;
 
-    metrics.totalTasks++;
+    if (event === 'start') {
+      metrics.totalTasks++;
+      return;
+    }
 
     if (event === 'success') {
       metrics.successTasks++;

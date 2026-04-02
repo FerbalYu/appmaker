@@ -20,6 +20,7 @@ import { createDaemon, DAEMON_STATE } from './src/daemon/index.js';
 import { MultiAgentThinker } from './src/thinker.js';
 import { AssetScoutAdapter } from './src/agents/asset-scout.js';
 import { promises as fs } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'readline';
@@ -88,13 +89,13 @@ daemonDataDir = path.join(executeDir, '.daemon');
 process.on('unhandledRejection', (error) => {
   console.error('\x1b[31mUnhandled Rejection:\x1b[0m', error?.message || error);
   if (process.env.DEBUG) console.error(error.stack);
-  process.exit(1);
+  process.exitCode = 1;
 });
 
 process.on('uncaughtException', (error) => {
   console.error('\x1b[31mUnhandled Exception:\x1b[0m', error?.message || error);
   if (process.env.DEBUG) console.error(error.stack);
-  process.exit(1);
+  process.exitCode = 1;
 });
 
 let globalDaemon = null;
@@ -207,7 +208,7 @@ async function main() {
       console.log(`   查看状态: bun cli.js daemon --dir "${executeDir}"`);
     }
 
-    process.exit(0);
+    process.exit(process.exitCode || 0);
   } catch (error) {
     if (globalDaemon) {
       try {
@@ -382,50 +383,167 @@ async function cmdExecute(input) {
   await executePlan(plan);
 }
 
+async function collectPlanCandidates(baseDir) {
+  const candidates = [
+    path.join(baseDir, '.appmaker', 'plans'),
+    path.join(baseDir, '.appmaker'),
+    path.join(baseDir, '.ncf', 'plans'),
+    path.join(baseDir, '.ncf'),
+  ];
+  const planFiles = [];
+
+  for (const dir of candidates) {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith('.json')) continue;
+        if (!entry.name.toLowerCase().includes('plan')) continue;
+        const fullPath = path.join(dir, entry.name);
+        const stat = await fs.stat(fullPath);
+        planFiles.push({ path: fullPath, mtimeMs: stat.mtimeMs });
+      }
+    } catch {
+      // ignore missing dirs
+    }
+  }
+
+  return planFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+async function loadLatestCheckpointTaskStatus(baseDir) {
+  const checkpointDirs = [path.join(baseDir, '.appmaker', 'checkpoints'), path.join(baseDir, '.ncf', 'checkpoints')];
+  const files = [];
+
+  for (const dir of checkpointDirs) {
+    try {
+      const names = await fs.readdir(dir);
+      for (const name of names) {
+        if (!name.endsWith('.json')) continue;
+        const fullPath = path.join(dir, name);
+        const stat = await fs.stat(fullPath);
+        files.push({ path: fullPath, mtimeMs: stat.mtimeMs });
+      }
+    } catch {
+      // ignore missing checkpoint dirs
+    }
+  }
+
+  if (files.length === 0) return { tasks: {}, checkpoint: null };
+  const latest = files.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  try {
+    const checkpoint = JSON.parse(await fs.readFile(latest.path, 'utf-8'));
+    return { tasks: checkpoint.tasks || {}, checkpoint: latest.path };
+  } catch {
+    return { tasks: {}, checkpoint: latest.path };
+  }
+}
+
+function extractTaskStatus(checkpointEntry) {
+  if (!checkpointEntry) return '';
+  if (typeof checkpointEntry === 'string') return checkpointEntry;
+  return checkpointEntry.status || checkpointEntry.result?.status || '';
+}
+
+async function resolveReusablePlan(baseDir) {
+  const plans = await collectPlanCandidates(baseDir);
+  if (plans.length === 0) return null;
+
+  for (const planFile of plans) {
+    try {
+      const plan = JSON.parse(await fs.readFile(planFile.path, 'utf-8'));
+      if (!plan || !Array.isArray(plan.tasks) || plan.tasks.length === 0) continue;
+
+      const { tasks: checkpointTasks, checkpoint } = await loadLatestCheckpointTaskStatus(baseDir);
+      const total = plan.tasks.length;
+      const done = plan.tasks.filter((task) => extractTaskStatus(checkpointTasks[task.id]) === 'done').length;
+      const completed = total > 0 && done === total;
+
+      return {
+        plan,
+        planPath: planFile.path,
+        completed,
+        totalTasks: total,
+        doneTasks: done,
+        checkpoint,
+      };
+    } catch {
+      // ignore broken json, continue probing
+    }
+  }
+
+  return null;
+}
+
 async function cmdRun(requirement) {
   const autoYes = args.includes('--yes') || args.includes('-y');
   const actualArgs = args.filter((a) => !a.startsWith('--yes') && a !== '-y');
-  requirement = actualArgs.slice(1).join(' ');
-
-  if (!requirement) {
-    console.error('\x1b[31m错误: 请提供需求描述\x1b[0m');
-    console.log('用法: bun cli.js run "做一个博客系统" [--yes] [--no-daemon]');
-    process.exit(1);
-  }
+  const rawRequirement = actualArgs.slice(1).join(' ').trim();
+  const rainmakerAutoMode = !rawRequirement;
+  requirement = rainmakerAutoMode
+    ? `Rainmaker 自动巡检 ${executeDir}，按“能跑 > 防坑 > 优化”生成修复计划并执行`
+    : rawRequirement;
 
   await startMonitor();
 
   console.log('='.repeat(50));
   console.log('='.repeat(50));
 
-  console.log('步骤 1: 依据需求生成严格执行计划 (Planner)');
+  if (rainmakerAutoMode) {
+    console.log('步骤 1: 未提供需求文案，启用 Rainmaker 全局巡检并生成修复计划');
+  } else {
+    console.log('步骤 1: 依据需求生成严格执行计划 (Planner)');
+  }
   console.log('='.repeat(50));
   console.log();
 
   let plan;
-  try {
-    const planner = new Planner({ project_root: executeDir, globalBus });
-    plan = await planner.plan(requirement);
-
-    const filename = `plan_${Date.now()}.json`;
-    const plansDir = path.join(executeDir, '.ncf', 'plans');
-    await planner.savePlan(plan, filename, plansDir);
+  const reusablePlan = await resolveReusablePlan(executeDir);
+  if (reusablePlan && !reusablePlan.completed) {
+    console.log(`[Run] ♻️ 检测到未完成计划，优先续跑: ${reusablePlan.planPath}`);
+    console.log(
+      `[Run] 📌 已完成 ${reusablePlan.doneTasks}/${reusablePlan.totalTasks}，跳过新规划（Planner/Rainmaker）`,
+    );
+    if (reusablePlan.checkpoint) {
+      console.log(`[Run] 使用检查点参考: ${reusablePlan.checkpoint}`);
+    }
+    plan = reusablePlan.plan;
     globalBus.emit('plan:ready', { plan });
+  }
 
-    if (globalDaemon) {
-      await globalDaemon.getMemory().store(
-        'semantic',
-        {
-          type: 'execution_plan',
-          project: plan.project,
-          taskCount: plan.tasks.length,
-          milestoneCount: plan.milestones.length,
-          filename,
-        },
-        {
-          tags: ['planning', 'execution', plan.project.name],
-        },
-      );
+  if (reusablePlan && reusablePlan.completed) {
+    console.log(
+      `[Run] ✅ 检测到历史计划已完成 (${reusablePlan.doneTasks}/${reusablePlan.totalTasks})，继续进行新一轮规划`,
+    );
+  }
+
+  try {
+    if (!plan) {
+      const planner = new Planner({ project_root: executeDir, globalBus });
+      plan = rainmakerAutoMode
+        ? await planner.planByRainmaker({ requirement })
+        : await planner.plan(requirement);
+
+      const filename = `plan_${Date.now()}.json`;
+      const plansDir = path.join(executeDir, '.ncf', 'plans');
+      await planner.savePlan(plan, filename, plansDir);
+      globalBus.emit('plan:ready', { plan });
+
+      if (globalDaemon) {
+        await globalDaemon.getMemory().store(
+          'semantic',
+          {
+            type: 'execution_plan',
+            project: plan.project,
+            taskCount: plan.tasks.length,
+            milestoneCount: plan.milestones.length,
+            filename,
+          },
+          {
+            tags: ['planning', 'execution', plan.project.name],
+          },
+        );
+      }
     }
   } catch (error) {
     console.error('\x1b[31mPlan generation failed:\x1b[0m', error.message);
@@ -503,14 +621,12 @@ async function executePlan(plan, rawContext = '') {
   const isGameLike = /游戏|game|打怪|射击|消除|闯关|模拟|生存/i.test((plan.project?.type || '') + ' ' + (plan.project?.description || '') + ' ' + rawContext);
   if (isGameLike) {
     console.log('\\x1b[36m🤖 侦测到项目包含互动/游戏元素，正在由架构师评估是否需要启动 AssetScout 寻宝...\\x1b[0m');
-    
+
     let localFilesDoc = '目录下目前没有明确的美术资源文件（如 png/jpg/wav）';
     try {
-      const fs = require('fs');
-      const path = require('path');
       const pubPath = path.join(executeDir, 'public');
-      if (fs.existsSync(pubPath)) {
-        const files = fs.readdirSync(pubPath, { recursive: true }).filter(f => f.match(/\\.(png|jpg|jpeg|gif|webp|svg|wav|mp3|ogg)$/i));
+      if (existsSync(pubPath)) {
+        const files = readdirSync(pubPath, { recursive: true }).filter(f => f.match(/\\.(png|jpg|jpeg|gif|webp|svg|wav|mp3|ogg)$/i));
         if (files.length > 0) {
           localFilesDoc = `public/ 目录下已有以下素材：\\n` + files.slice(0, 10).join(', ') + (files.length > 10 ? ' ...等' : '');
         }
@@ -671,11 +787,12 @@ async function executePlan(plan, rawContext = '') {
 
   if (result.summary.needs_human > 0) {
     console.log('\n\x1b[33m注意: 部分任务需要人工介入\x1b[0m');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (result.status !== 'success') {
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
@@ -693,7 +810,7 @@ function showHelp() {
    health (h)          检查 Agent 可用性
    plan (p) <需求>     生成执行计划
    execute (e) <计划>  执行计划文件
-   run (r) <需求>      一键生成计划并执行（推荐）
+  run (r) [需求]      一键生成计划并执行（需求为空时启用 Rainmaker）
    think (t) <问题>    启动 4-Agent 思考与辩论模式
    daemon (d)          查看守护进程状态
    status (s)          查看当前执行状态
@@ -711,6 +828,7 @@ function showHelp() {
    bun cli.js h
    bun cli.js p "创建一个博客系统"
    bun cli.js r "创建一个博客系统" --dir ./my-project
+  bun cli.js r --dir D:\\project
    bun cli.js e plans/plan.json --dir ./my-project
    bun cli.js s --dir ./my-project
    bun cli.js l errors --dir ./my-project
@@ -720,6 +838,7 @@ function showHelp() {
    - 使用短命令可以加快输入速度
    - --dir 参数可以避免在主目录工作
    - --yes 可以用于自动化脚本
+  - run 只提供 --dir 时会自动触发 Rainmaker 全局巡检与修复规划
 `);
 }
 
@@ -836,7 +955,6 @@ async function cmdConfig(key, value) {
     task_timeout: 300000,
     max_retries: 2,
     max_concurrent_tasks: 3,
-    token_budget: 50000000,
     heartbeat_interval: 30000,
   };
 
@@ -847,7 +965,7 @@ async function cmdConfig(key, value) {
     }
     console.log();
     console.log('使用 "bun cli.js config <key>" 查看单个配置');
-    console.log('示例: bun cli.js config token_budget');
+    console.log('示例: bun cli.js config max_review_cycles');
     return;
   }
 
