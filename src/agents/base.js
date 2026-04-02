@@ -77,13 +77,31 @@ export class AgentAdapter extends EventEmitter {
    * @param {Object} args
    * @returns {Promise<Object>}
    */
-  async executeTool(toolName, args = {}) {
-    this.emit('action', { type: 'tool_call', tool: toolName, args });
+  async executeTool(toolName, args = {}, toolCallId = null) {
+    const id = toolCallId || `tc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    this.emit('action', { 
+      type: 'tool_start', 
+      toolCallId: id,
+      tool: toolName, 
+      args,
+      content: '⏳ 工具执行中...'
+    });
 
     const cacheKey = `${toolName}:${JSON.stringify(args)}`;
 
     if (this._toolCache.has(cacheKey)) {
-      return this._toolCache.get(cacheKey);
+      const result = this._toolCache.get(cacheKey);
+      let textOutput = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      if (textOutput.length > 8000) textOutput = textOutput.substring(0, 8000) + '... (output truncated)';
+      
+      this.emit('action', {
+        type: 'tool_result_update',
+        toolCallId: id,
+        tool: toolName,
+        success: result.success,
+        content: `(Cache Hit) ${textOutput}`
+      });
+      return result;
     }
 
     const result = await this.toolbox.execute(toolName, args);
@@ -91,6 +109,19 @@ export class AgentAdapter extends EventEmitter {
     if (result.success) {
       this._toolCache.set(cacheKey, result);
     }
+
+    let textOutput = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    if (textOutput.length > 8000) {
+      textOutput = textOutput.substring(0, 8000) + '... (output truncated)';
+    }
+
+    this.emit('action', {
+      type: 'tool_result_update',
+      toolCallId: id,
+      tool: toolName,
+      success: result.success !== false,
+      content: textOutput
+    });
 
     return result;
   }

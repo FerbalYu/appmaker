@@ -1,12 +1,12 @@
-# appMaker Harness 架构设计
+# NexusCodeForge (NCF) Harness 架构设计
 
-appMaker 基于 **Harness Engineering** 理念构建，通过约束规则驱动 AI Agent 自主完成 APP 的策划、编写、优化、修正全流程。
+NexusCodeForge 基于 **Harness Engineering** 理念构建，通过约束规则驱动 AI Agent 自主完成 APP 的策划、编写、优化、修正全流程。
 
 ---
 
 ## 设计理念
 
-| 传统开发     | appMaker               |
+| 传统开发     | NexusCodeForge         |
 | ------------ | ---------------------- |
 | 人类编写代码 | AI 执行，Harness 编排  |
 | Code Review  | 自动化质量检查 + Rules |

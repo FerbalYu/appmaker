@@ -1,12 +1,12 @@
 # AGENTS.md
 
-appMaker 项目的 AI Agent 工作手册。定义各 Agent 的职责边界、协作协议和交互规范。
+NexusCodeForge 项目的 AI Agent 工作手册。定义各 Agent 的职责边界、协作协议和交互规范。
 
 ---
 
 ## 概述
 
-appMaker 采用 Multi-Agent 协作架构，通过明确的职责分工实现从需求到交付的自动化流程。
+NexusCodeForge 采用 Multi-Agent 协作架构，通过明确的职责分工实现从需求到交付的自动化流程。
 
 ### Agent 角色矩阵
 

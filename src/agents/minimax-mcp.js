@@ -97,7 +97,7 @@ export class MinimaxMCPAdapter extends AgentAdapter {
       });
 
       mcpClient = new Client(
-        { name: 'appmaker-minimax-planner', version: '1.0.0' },
+        { name: 'ncf-minimax-planner', version: '1.0.0' },
         { capabilities: {} },
       );
 

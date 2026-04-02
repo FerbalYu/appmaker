@@ -1,775 +1,801 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>appMaker - GPT-like Dashboard</title>
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <style>
-      body {
-        background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #000000);
-        background-size: 400% 400%;
-        animation: gradientBG 15s ease infinite;
-        color: #f8fafc;
-        font-family:
-          'Inter',
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          Roboto,
-          Helvetica,
-          Arial,
-          sans-serif;
-        overflow: hidden;
-        margin: 0;
-        height: 100vh;
-      }
-      @keyframes gradientBG {
-        0% {
-          background-position: 0% 50%;
-        }
-        50% {
-          background-position: 100% 50%;
-        }
-        100% {
-          background-position: 0% 50%;
-        }
-      }
-      .glass {
-        background: rgba(15, 23, 42, 0.6);
-        backdrop-filter: blur(24px);
-        -webkit-backdrop-filter: blur(24px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-      }
-      .text-glow {
-        text-shadow: 0 0 10px rgba(167, 139, 250, 0.5);
-      }
-      .pulse-ring {
-        animation: pulsate 2s infinite ease-out;
-      }
-      @keyframes pulsate {
-        0% {
-          transform: scale(0.8);
-          opacity: 0.5;
-        }
-        100% {
-          transform: scale(2.5);
-          opacity: 0;
-        }
-      }
-      /* Scrollbar */
-      ::-webkit-scrollbar {
-        width: 6px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 3px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.2);
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NexusCodeForge (NCF) - Dashboard</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    body {
+      background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #000000);
+      background-size: 400% 400%;
+      animation: gradientBG 15s ease infinite;
+      color: #f8fafc;
+      font-family:
+        'Inter',
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        Helvetica,
+        Arial,
+        sans-serif;
+      overflow: hidden;
+      margin: 0;
+      height: 100vh;
+    }
+
+    @keyframes gradientBG {
+      0% {
+        background-position: 0% 50%;
       }
 
-      /* Transitions */
-      .list-enter-active,
-      .list-leave-active {
-        transition: all 0.5s ease;
+      50% {
+        background-position: 100% 50%;
       }
-      .list-enter-from,
-      .list-leave-to {
+
+      100% {
+        background-position: 0% 50%;
+      }
+    }
+
+    .glass {
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .text-glow {
+      text-shadow: 0 0 10px rgba(167, 139, 250, 0.5);
+    }
+
+    .pulse-ring {
+      animation: pulsate 2s infinite ease-out;
+    }
+
+    @keyframes pulsate {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+      }
+
+      100% {
+        transform: scale(2.5);
         opacity: 0;
-        transform: translateY(10px);
       }
-    </style>
-  </head>
-  <body class="flex items-center justify-center p-6 text-sm">
-    <div id="app" class="w-full max-w-[1400px] h-full flex flex-col gap-6" v-cloak>
-      <!-- Top Header Widget -->
-      <div class="glass rounded-2xl p-5 flex items-center justify-between shrink-0">
-        <div class="flex items-center gap-4">
-          <div
-            class="relative w-10 h-10 flex items-center justify-center rounded-full shadow-lg"
-            :class="phaseColor"
-          >
-            <div
-              class="absolute inset-0 rounded-full border opacity-50 pulse-ring"
-              :class="phaseBorder"
-              v-if="state !== 'Disconnected' && phase !== 'done' && phase !== 'think_done'"
-            ></div>
-            <svg
-              v-if="phase === 'think'"
-              class="w-5 h-5 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-            <svg
-              v-else-if="phase === 'done' || phase === 'think_done'"
-              class="w-5 h-5 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-            <svg
-              v-else
-              class="w-5 h-5 text-white animate-spin"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke-width="3"
-                stroke-dasharray="32"
-                stroke-linecap="round"
-              />
-            </svg>
-          </div>
-          <div>
-            <h1 class="text-xl font-bold tracking-tight text-glow">
-              appMaker 引擎
-              <span v-if="plan" class="text-emerald-300 ml-2">- {{plan.project.name}}</span>
-            </h1>
-            <p class="text-slate-400 text-xs mt-0.5">
-              Step:
-              <span class="uppercase tracking-wider font-semibold text-slate-200">{{phase}}</span>
-              <span class="mx-2">|</span>
-              Tokens:
-              <span class="font-mono text-amber-300 font-bold">{{tokens.toLocaleString()}}</span>
-              <span class="mx-2">|</span>
-              Duration:
-              <span class="font-mono text-cyan-300 font-bold">{{formatTime(globalStartTime)}}</span>
-            </p>
-          </div>
-        </div>
+    }
 
-        <div class="text-right">
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Transitions */
+    .list-enter-active,
+    .list-leave-active {
+      transition: all 0.5s ease;
+    }
+
+    .list-enter-from,
+    .list-leave-to {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    [v-cloak] {
+      display: none;
+    }
+  </style>
+</head>
+
+<body class="flex items-center justify-center p-6 text-sm">
+  <div id="app" class="w-full max-w-[1400px] h-full flex flex-col gap-6" v-cloak>
+    <!-- Top Header Widget -->
+    <div class="glass rounded-2xl p-5 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-4">
+        <div class="relative w-10 h-10 flex items-center justify-center rounded-full shadow-lg" :class="phaseColor">
+          <div class="absolute inset-0 rounded-full border opacity-50 pulse-ring" :class="phaseBorder"
+            v-if="state !== 'Disconnected' && phase !== 'done' && phase !== 'think_done'"></div>
+          <svg v-if="phase === 'think'" class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <svg v-else-if="phase === 'done' || phase === 'think_done'" class="w-5 h-5 text-white" fill="none"
+            viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          <svg v-else class="w-5 h-5 text-white animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32" stroke-linecap="round" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-glow">
+            NCF 引擎
+            <span v-if="plan" class="text-emerald-300 ml-2">- {{plan.project.name}}</span>
+          </h1>
+          <p class="text-slate-400 text-xs mt-0.5">
+            Step:
+            <span class="uppercase tracking-wider font-semibold text-slate-200">{{phase}}</span>
+            <span class="mx-2">|</span>
+            Tokens:
+            <span class="font-mono text-amber-300 font-bold">{{tokens.toLocaleString()}}</span>
+            <span class="mx-2">|</span>
+            Duration:
+            <span class="font-mono text-cyan-300 font-bold">{{formatTime(globalStartTime)}}</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="text-right flex items-center justify-end gap-3">
+        <button
+          v-if="engineState !== 'paused' && state !== 'Disconnected' && phase !== 'done' && phase !== 'think_done'"
+          @click="toggleEngine"
+          class="px-3 py-1.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 text-xs tracking-wider transition-colors flex items-center gap-1 font-semibold shadow-sm">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          PAUSE
+        </button>
+
+        <button
+          v-if="engineState === 'paused' && state !== 'Disconnected' && phase !== 'done' && phase !== 'think_done'"
+          @click="toggleEngine"
+          class="px-3 py-1.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 text-xs tracking-wider transition-colors flex items-center gap-1 font-semibold shadow-[0_0_15px_rgba(16,185,129,0.3)] animate-pulse">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          RESUME
+        </button>
+
+        <div class="flex flex-col text-right">
           <div class="text-xs text-slate-400 uppercase tracking-widest mb-1">State</div>
           <div class="text-sm font-semibold text-slate-200 flex items-center justify-end gap-2">
-            <span
-              class="w-2 h-2 rounded-full inline-block"
-              :class="state === 'Disconnected' ? 'bg-red-500' : 'bg-green-500'"
-            ></span>
+            <span class="w-2 h-2 rounded-full inline-block"
+              :class="state === 'Disconnected' ? 'bg-red-500' : 'bg-green-500'"></span>
             {{state}}
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Collapsed 4-Agent Chat History (Visible post-think phase) -->
-      <details
-        v-if="phase !== 'think' && thinkMessages.length > 0"
-        class="glass rounded-xl overflow-hidden shrink-0 group custom-scrollbar"
-      >
-        <summary
-          class="px-5 py-3 cursor-pointer text-xs font-semibold text-indigo-300 hover:text-indigo-200 bg-white/[0.03] flex items-center justify-between select-none transition-colors border-b border-transparent group-open:border-white/5"
-        >
-          <span class="flex items-center gap-2">
-            <svg
-              class="w-4 h-4 text-indigo-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-            4-Agent Discussion Record (联合需求解析记录)
+    <!-- Collapsed 4-Agent Chat History (Visible post-think phase) -->
+    <details v-if="phase !== 'think' && thinkMessages.length > 0"
+      class="glass rounded-xl overflow-hidden shrink-0 group custom-scrollbar">
+      <summary
+        class="px-5 py-3 cursor-pointer text-xs font-semibold text-indigo-300 hover:text-indigo-200 bg-white/[0.03] flex items-center justify-between select-none transition-colors border-b border-transparent group-open:border-white/5">
+        <span class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          4-Agent Discussion Record (联合需求解析记录)
+        </span>
+        <span class="text-xs text-slate-500 font-normal group-open:hidden">...点击展开</span>
+        <span class="text-xs text-slate-500 font-normal hidden group-open:inline">收起折叠</span>
+      </summary>
+      <div class="bg-slate-900/60 p-5 max-h-[300px] overflow-y-auto space-y-4 text-sm relative">
+        <div v-for="(msg, i) in thinkMessages" :key="'col-'+i" class="flex flex-col gap-1 w-full"
+          :class="msg.role === 'Captain' ? 'items-center mt-6' : ''">
+          <span class="text-[10px] font-bold uppercase tracking-wider" :class="getRoleColor(msg.role)">
+            {{msg.role}}
           </span>
-          <span class="text-xs text-slate-500 font-normal group-open:hidden">...点击展开</span>
-          <span class="text-xs text-slate-500 font-normal hidden group-open:inline">收起折叠</span>
-        </summary>
-        <div class="bg-slate-900/60 p-5 max-h-[300px] overflow-y-auto space-y-4 text-sm relative">
           <div
-            v-for="(msg, i) in thinkMessages"
-            :key="'col-'+i"
-            class="flex flex-col gap-1 w-full"
-            :class="msg.role === 'Captain' ? 'items-center mt-6' : ''"
-          >
-            <span
-              class="text-[10px] font-bold uppercase tracking-wider"
-              :class="getRoleColor(msg.role)"
-            >
-              {{msg.role}}
-            </span>
-            <div
-              class="bg-slate-800/60 border border-slate-700/80 p-3 rounded-xl text-slate-300 max-w-[90%] prose prose-invert prose-xs max-w-none"
-              :class="msg.role === 'Captain' ? 'w-full bg-indigo-900/30 border-indigo-500/30 text-center font-medium' : ''"
-              v-html="renderMarkdown(msg.content)"
-            ></div>
-          </div>
+            class="bg-slate-800/60 border border-slate-700/80 p-3 rounded-xl text-slate-300 max-w-[90%] prose prose-invert prose-xs max-w-none text-xs"
+            :class="msg.role === 'Captain' ? 'w-full bg-indigo-900/30 border-indigo-500/30 text-center font-medium' : ''"
+            v-html="renderMarkdown(msg.content)"></div>
         </div>
-      </details>
+      </div>
+    </details>
 
-      <!-- Dynamic Wait/Retry Banner -->
-      <Transition name="list">
-        <div
-          v-if="activeWait"
-          class="glass shrink-0 rounded-2xl overflow-hidden shadow-2xl border-amber-500/30 bg-amber-900/20 relative"
-        >
-          <div
-            class="absolute inset-0 bg-gradient-to-r from-amber-500/10 to-transparent pointer-events-none"
-          ></div>
-          <div class="px-5 py-4 flex items-center justify-between relative z-10">
-            <div class="flex items-center gap-4">
-              <div
-                class="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 pulse-ring"
-              >
-                <svg
-                  class="w-6 h-6 text-amber-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h3 class="text-amber-400 font-bold text-lg mb-0.5">
-                  Execution Suspended: Cooling Down
-                </h3>
-                <p class="text-amber-200/80 text-sm flex gap-3">
-                  <span class="font-mono bg-amber-900/40 px-1.5 py-0.5 rounded text-amber-300"
-                    >{{activeWait.error}}</span
-                  >
-                </p>
-              </div>
-            </div>
-            <div class="text-right">
-              <div class="text-4xl font-mono font-bold text-amber-400 text-glow">
-                {{activeWait.timeLeft}}s
-              </div>
-              <div class="text-xs text-amber-500/80 uppercase tracking-widest mt-1">
-                UNTIL RETRY
-              </div>
-            </div>
-          </div>
-          <div class="h-1 bg-amber-900/50 w-full">
+    <!-- Dynamic Wait/Retry Banner -->
+    <Transition name="list">
+      <div v-if="activeWait"
+        class="glass shrink-0 rounded-2xl overflow-hidden shadow-2xl border-amber-500/30 bg-amber-900/20 relative">
+        <div class="absolute inset-0 bg-gradient-to-r from-amber-500/10 to-transparent pointer-events-none"></div>
+        <div class="px-5 py-4 flex items-center justify-between relative z-10">
+          <div class="flex items-center gap-4">
             <div
-              class="h-full bg-amber-500 transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(245,158,11,0.5)]"
-              :style="{ width: (activeWait.timeLeft / activeWait.totalTime) * 100 + '%' }"
-            ></div>
-          </div>
-        </div>
-      </Transition>
-
-      <!-- Main Content Area -->
-      <div class="flex-1 flex gap-6 min-h-0">
-        <!-- Left: Checklist & Plan (Only show during execution or done) -->
-        <div
-          v-show="plan"
-          class="glass w-80 shrink-0 rounded-2xl overflow-hidden flex flex-col transition-all"
-        >
-          <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
-            <h2 class="font-semibold text-slate-200 flex items-center gap-2">
-              <svg
-                class="w-4 h-4 text-emerald-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                />
+              class="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/50 pulse-ring">
+              <svg class="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              Task Checklist
-            </h2>
+            </div>
+            <div>
+              <h3 class="text-amber-400 font-bold text-lg mb-0.5">
+                Execution Suspended: Cooling Down
+              </h3>
+              <p class="text-amber-200/80 text-sm flex gap-3">
+                <span class="font-mono bg-amber-900/40 px-1.5 py-0.5 rounded text-amber-300">{{activeWait.error}}</span>
+              </p>
+            </div>
           </div>
-          <div class="flex-1 overflow-y-auto p-4 space-y-6">
-            <div v-if="plan" v-for="ms in plan.milestones" :key="ms.id">
-              <div
-                class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex justify-between"
-              >
-                <span>{{ms.name}}</span>
-                <span class="text-slate-500"
-                  >{{ms.tasks.filter(t => completedTasks.has(t)).length}}/{{ms.tasks.length}}</span
-                >
-              </div>
-              <div class="space-y-2">
-                <div
-                  v-for="taskId in ms.tasks"
-                  :key="taskId"
-                  class="flex items-start gap-3 p-2 rounded-lg transition-colors"
-                  :class="{
+          <div class="text-right">
+            <div class="text-4xl font-mono font-bold text-amber-400 text-glow">
+              {{activeWait.timeLeft}}s
+            </div>
+            <div class="text-xs text-amber-500/80 uppercase tracking-widest mt-1">
+              UNTIL RETRY
+            </div>
+          </div>
+        </div>
+        <div class="h-1 bg-amber-900/50 w-full">
+          <div
+            class="h-full bg-amber-500 transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(245,158,11,0.5)]"
+            :style="{ width: (activeWait.timeLeft / activeWait.totalTime) * 100 + '%' }"></div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex gap-6 min-h-0">
+      <!-- Left: Checklist & Plan (Only show during execution or done) -->
+      <div v-show="plan" class="glass w-80 shrink-0 rounded-2xl overflow-hidden flex flex-col transition-all">
+        <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
+          <h2 class="font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            Task Checklist
+          </h2>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-6">
+          <div v-if="plan" v-for="ms in plan.milestones" :key="ms.id">
+            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex justify-between">
+              <span>{{ms.name}}</span>
+              <span class="text-slate-500">{{ms.tasks.filter(t =>
+                completedTasks.has(t)).length}}/{{ms.tasks.length}}</span>
+            </div>
+            <div class="space-y-2">
+              <div v-for="taskId in ms.tasks" :key="taskId"
+                class="flex items-start gap-3 p-2 rounded-lg transition-colors" :class="{
                      'bg-emerald-500/10 border border-emerald-500/20': completedTasks.has(taskId),
                      'bg-rose-500/10 border border-rose-500/20': failedTasks.has(taskId),
                      'bg-slate-800/50 border border-slate-700': !completedTasks.has(taskId) && !failedTasks.has(taskId),
                      'ring-1 ring-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]': activeTasksMap.has(taskId)
-                   }"
-                >
-                  <div class="mt-0.5 shrink-0">
-                    <svg
-                      v-if="completedTasks.has(taskId)"
-                      class="w-4 h-4 text-emerald-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    <svg
-                      v-else-if="failedTasks.has(taskId)"
-                      class="w-4 h-4 text-rose-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    <div
-                      v-else-if="activeTasksMap.has(taskId)"
-                      class="w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"
-                    ></div>
-                    <div
-                      v-else
-                      class="w-4 h-4 rounded border border-slate-600 bg-slate-900/50"
-                    ></div>
-                  </div>
-                  <div>
-                    <div
-                      class="text-xs text-slate-300 line-clamp-2"
-                      :class="{'line-through text-slate-500': completedTasks.has(taskId)}"
-                    >
-                      {{getTaskDesc(taskId)}}
-                    </div>
+                   }">
+                <div class="mt-0.5 shrink-0">
+                  <svg v-if="completedTasks.has(taskId)" class="w-4 h-4 text-emerald-400" fill="currentColor"
+                    viewBox="0 0 20 20">
+                    <path fill-rule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clip-rule="evenodd" />
+                  </svg>
+                  <svg v-else-if="failedTasks.has(taskId)" class="w-4 h-4 text-rose-400" fill="currentColor"
+                    viewBox="0 0 20 20">
+                    <path fill-rule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                      clip-rule="evenodd" />
+                  </svg>
+                  <div v-else-if="activeTasksMap.has(taskId)"
+                    class="w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></div>
+                  <div v-else class="w-4 h-4 rounded border border-slate-600 bg-slate-900/50"></div>
+                </div>
+                <div>
+                  <div class="text-xs text-slate-300 line-clamp-2"
+                    :class="{'line-through text-slate-500': completedTasks.has(taskId)}">
+                    {{getTaskDesc(taskId)}}
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- Center: Main Focus Area -->
-        <div class="glass flex-1 rounded-2xl overflow-hidden flex flex-col relative">
-          <div
-            class="px-5 py-4 border-b border-white/5 bg-white/[0.02] flex justify-between items-center"
-          >
-            <h2 class="font-semibold text-slate-200 flex items-center gap-2">
-              <svg
-                class="w-4 h-4 text-indigo-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                />
-              </svg>
-              <span v-if="phase === 'think' || phase === 'think_done'">Multi-Agent Discussion</span>
-              <span v-else-if="phase === 'plan'">Planning & Generating Task Tree</span>
-              <span v-else-if="phase === 'execution'">Agent Telemetry</span>
-              <span v-else-if="phase === 'done'">Summary & Walkthrough</span>
-              <span v-else>Initialization</span>
-            </h2>
-            <span
-              v-if="telemetryActions.length > 0 && telemetryActions[0].tool"
-              class="bg-indigo-500/20 text-indigo-300 text-[10px] px-2 py-1 rounded select-all"
-            >
-              {{telemetryActions[0].tool}} {{telemetryActions[0].target}}
-            </span>
-          </div>
+      <!-- Center: Main Focus Area -->
+      <div class="glass flex-1 rounded-2xl overflow-hidden flex flex-col relative">
+        <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02] flex justify-between items-center">
+          <h2 class="font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <span v-if="phase === 'think' || phase === 'think_done'">Multi-Agent Discussion</span>
+            <span v-else-if="phase === 'plan'">Planning & Generating Task Tree</span>
+            <span v-else-if="phase === 'execution'">Agent Telemetry</span>
+            <span v-else-if="phase === 'done'">Summary & Walkthrough</span>
+            <span v-else>Initialization</span>
+          </h2>
+          <span v-if="telemetryActions.length > 0 && telemetryActions[0].tool"
+            class="bg-indigo-500/20 text-indigo-300 text-[10px] px-2 py-1 rounded select-all">
+            {{telemetryActions[0].tool}} {{telemetryActions[0].target}}
+          </span>
+        </div>
 
-          <!-- THINKING CHAT UI -->
-          <div
-            v-if="phase === 'think' || phase === 'think_done'"
-            class="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth"
-            id="chat-container"
-          >
-            <TransitionGroup name="list">
+        <!-- THINKING CHAT UI -->
+        <div v-if="phase === 'think' || phase === 'think_done'"
+          class="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth" id="chat-container">
+          <TransitionGroup name="list">
+            <div v-for="(msg, i) in thinkMessages" :key="i" class="flex flex-col gap-1 w-full"
+              :class="msg.role === 'Captain' ? 'items-center mt-8' : ''">
+              <span class="text-xs font-bold uppercase tracking-wider" :class="getRoleColor(msg.role)">
+                {{msg.role}}
+              </span>
               <div
-                v-for="(msg, i) in thinkMessages"
-                :key="i"
-                class="flex flex-col gap-1 w-full"
-                :class="msg.role === 'Captain' ? 'items-center mt-8' : ''"
-              >
-                <span
-                  class="text-xs font-bold uppercase tracking-wider"
-                  :class="getRoleColor(msg.role)"
-                >
-                  {{msg.role}}
-                </span>
+                class="bg-slate-800/60 border border-slate-700 p-4 rounded-xl text-slate-200 text-sm max-w-[85%] prose prose-invert prose-sm max-w-none"
+                :class="msg.role === 'Captain' ? 'w-full bg-indigo-900/40 border-indigo-500/30 text-center font-medium' : ''"
+                v-html="renderMarkdown(msg.content)"></div>
+            </div>
+          </TransitionGroup>
+          <div v-if="thinkMessages.length > 0 && thinkMessages[thinkMessages.length-1].role !== 'Captain'"
+            class="flex gap-2 items-center text-slate-500 text-xs ml-2">
+            <div class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce"></div>
+            <div class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+            <div class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+            Waiting for next agent...
+          </div>
+        </div>
+
+        <!-- EXECUTION TELEMETRY UI -->
+        <div v-else-if="phase === 'execution'" class="flex-1 overflow-y-auto p-6 relative" id="telemetry-container">
+          <div class="absolute left-10 top-6 bottom-6 w-0.5 bg-indigo-500/20 rounded-full hidden sm:block"></div>
+
+          <div class="space-y-6 relative h-full custom-scrollbar pb-10">
+            <TransitionGroup name="list">
+              <div v-for="action in telemetryActions" :key="action.id" class="relative flex items-start gap-4">
+                <!-- Timeline Element -->
                 <div
-                  class="bg-slate-800/60 border border-slate-700 p-4 rounded-xl text-slate-200 text-sm max-w-[85%] prose prose-invert prose-sm max-w-none"
-                  :class="msg.role === 'Captain' ? 'w-full bg-indigo-900/40 border-indigo-500/30 text-center font-medium' : ''"
-                  v-html="renderMarkdown(msg.content)"
-                ></div>
+                  class="relative hidden sm:flex shrink-0 w-8 h-8 rounded-full border border-indigo-400/50 items-center justify-center bg-slate-900 shadow-[0_0_15px_rgba(99,102,241,0.3)] z-10"
+                  :class="action.agent === 'native-coder' ? 'border-indigo-400/50 shadow-indigo-500/30' : 'border-amber-400/50 shadow-amber-500/30'">
+                  <svg v-if="action.agent === 'native-coder'" class="w-4 h-4 text-indigo-400" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                  </svg>
+                  <svg v-else class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+
+                <div
+                  class="bg-indigo-950/20 border border-indigo-500/20 hover:border-indigo-400/40 hover:bg-indigo-900/30 transition-all rounded-xl p-4 shadow-lg backdrop-blur flex-1">
+                  <div
+                    class="text-[10px] text-slate-400 mb-3 uppercase font-semibold tracking-widest flex justify-between items-center border-b border-indigo-500/10 pb-2">
+                    <span class="flex items-center gap-2">
+                      <span class="px-2 py-0.5 rounded-full"
+                        :class="action.agent === 'native-coder' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-amber-500/20 text-amber-300'">
+                        {{action.agent}}
+                      </span>
+                      <span class="text-slate-500 mx-1">•</span>
+                      <span :class="action.type === 'think' ? 'text-fuchsia-400' : 'text-emerald-400'">{{action.type ===
+                        'think' ? 'INTERNAL THOUGHT' : 'TOOL EXECUTION'}}</span>
+                    </span>
+                    <span class="text-slate-500 flex items-center gap-1 font-mono">
+                      <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {{action.time}}
+                    </span>
+                  </div>
+
+                  <div v-if="action.type === 'think'" class="mt-2">
+                    <details
+                      class="bg-slate-900/50 rounded border border-slate-700 overflow-hidden think-block transition-all">
+                      <summary
+                        class="px-3 py-2 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 flex items-center select-none bg-slate-800/30">
+                        🧠 大脑思考过程 (点击展开)
+                      </summary>
+                      <div
+                        class="p-3 text-slate-300 text-sm border-t border-slate-700/50 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed">
+                        {{action.content}}
+                      </div>
+                    </details>
+                  </div>
+                  <div v-else class="flex flex-col gap-2">
+                    <div class="font-mono text-sm flex items-start gap-3 mt-1">
+                      <span class="px-2.5 py-1 border rounded shadow-sm shrink-0 whitespace-nowrap relative group"
+                        :class="action.type === 'tool_loading' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : (action.type === 'tool_error' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20')">
+                        <svg v-if="action.type === 'tool_loading'" class="w-4 h-4 inline-block mr-1 animate-spin"
+                          viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32"
+                            stroke-linecap="round" />
+                        </svg>
+                        <span v-else>>_</span>
+                        {{getToolName(action.tool)}}
+                        <div
+                          class="absolute -top-8 left-0 hidden group-hover:block bg-slate-800 text-xs px-2 py-1 rounded shadow text-slate-300 opacity-90 whitespace-nowrap z-50 border border-slate-600">
+                          {{action.tool}}
+                        </div>
+                      </span>
+                      <span
+                        class="text-slate-300 text-[13px] break-all max-h-20 overflow-y-auto custom-scrollbar py-1">{{action.target}}</span>
+                    </div>
+                    <details v-if="action.content"
+                      class="bg-slate-900/50 rounded border border-slate-700 overflow-hidden transition-all">
+                      <summary
+                        class="px-3 py-1.5 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/40 flex items-center select-none">
+                        📄 输出详情 / LLM 意图 (点击展开)
+                      </summary>
+                      <div
+                        class="p-3 text-slate-300 text-[11px] border-t border-slate-700/50 font-mono max-h-[400px] overflow-y-auto overflow-x-hidden custom-scrollbar bg-slate-900">
+                        <div class="custom-tool-render break-all" v-html="renderToolHTML(action.tool, action.content)"></div>
+                      </div>
+                    </details>
+                  </div>
+                </div>
               </div>
             </TransitionGroup>
-            <div
-              v-if="thinkMessages.length > 0 && thinkMessages[thinkMessages.length-1].role !== 'Captain'"
-              class="flex gap-2 items-center text-slate-500 text-xs ml-2"
-            >
-              <div class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce"></div>
-              <div
-                class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce"
-                style="animation-delay: 0.1s"
-              ></div>
-              <div
-                class="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce"
-                style="animation-delay: 0.2s"
-              ></div>
-              Waiting for next agent...
-            </div>
-          </div>
 
-          <!-- EXECUTION TELEMETRY UI -->
-          <div
-            v-else-if="phase === 'execution'"
-            class="flex-1 overflow-y-auto p-6 relative"
-            id="telemetry-container"
-          >
-            <div
-              class="absolute left-10 top-6 bottom-6 w-0.5 bg-indigo-500/20 rounded-full hidden sm:block"
-            ></div>
-
-            <div class="space-y-6 relative h-full custom-scrollbar pb-10">
-              <TransitionGroup name="list">
-                <div
-                  v-for="action in telemetryActions"
-                  :key="action.id"
-                  class="relative flex items-start gap-4"
-                >
-                  <!-- Timeline Element -->
-                  <div
-                    class="relative hidden sm:flex shrink-0 w-8 h-8 rounded-full border border-indigo-400/50 items-center justify-center bg-slate-900 shadow-[0_0_15px_rgba(99,102,241,0.3)] z-10"
-                    :class="action.agent === 'native-coder' ? 'border-indigo-400/50 shadow-indigo-500/30' : 'border-amber-400/50 shadow-amber-500/30'"
-                  >
-                    <svg
-                      v-if="action.agent === 'native-coder'"
-                      class="w-4 h-4 text-indigo-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                      />
-                    </svg>
-                    <svg
-                      v-else
-                      class="w-4 h-4 text-amber-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-
-                  <div
-                    class="bg-indigo-950/20 border border-indigo-500/20 hover:border-indigo-400/40 hover:bg-indigo-900/30 transition-all rounded-xl p-4 shadow-lg backdrop-blur flex-1"
-                  >
-                    <div
-                      class="text-[10px] text-slate-400 mb-3 uppercase font-semibold tracking-widest flex justify-between items-center border-b border-indigo-500/10 pb-2"
-                    >
-                      <span class="flex items-center gap-2">
-                        <span
-                          class="px-2 py-0.5 rounded-full"
-                          :class="action.agent === 'native-coder' ? 'bg-indigo-500/20 text-indigo-300' : 'bg-amber-500/20 text-amber-300'"
-                        >
-                          {{action.agent}}
-                        </span>
-                        <span class="text-slate-500 mx-1">•</span>
-                        <span
-                          :class="action.type === 'think' ? 'text-fuchsia-400' : 'text-emerald-400'"
-                          >{{action.type === 'think' ? 'INTERNAL THOUGHT' : 'TOOL EXECUTION'}}</span
-                        >
-                      </span>
-                      <span class="text-slate-500 flex items-center gap-1 font-mono">
-                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        {{action.time}}
-                      </span>
-                    </div>
-
-                    <div v-if="action.type === 'think'" class="mt-2">
-                      <details
-                        class="bg-slate-900/50 rounded border border-slate-700 overflow-hidden think-block transition-all"
-                      >
-                        <summary
-                          class="px-3 py-2 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 flex items-center select-none bg-slate-800/30"
-                        >
-                          🧠 大脑思考过程 (点击展开)
-                        </summary>
-                        <div
-                          class="p-3 text-slate-300 text-sm border-t border-slate-700/50 prose prose-invert prose-sm max-w-none whitespace-pre-wrap leading-relaxed"
-                        >
-                          {{action.content}}
-                        </div>
-                      </details>
-                    </div>
-                    <div v-else class="font-mono text-sm flex items-center gap-3">
-                      <span
-                        class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded shadow-sm shrink-0 whitespace-nowrap"
-                      >
-                        >_ {{action.tool}}
-                      </span>
-                      <span
-                        class="text-slate-300 text-[13px] break-all max-h-20 overflow-y-auto custom-scrollbar"
-                        >{{action.target}}</span
-                      >
-                    </div>
-                  </div>
-                </div>
-              </TransitionGroup>
-
-              <!-- Skeleton waiting indicator if empty -->
-              <div
-                v-if="telemetryActions.length === 0"
-                class="h-full flex flex-col items-center justify-center text-slate-500 mt-20"
-              >
-                <svg
-                  class="w-16 h-16 mb-4 opacity-20 text-indigo-300 animate-pulse"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                  />
-                </svg>
-                <div class="tracking-widest uppercase text-xs font-semibold">
-                  Waiting for Agent Action...
-                </div>
+            <!-- Skeleton waiting indicator if empty -->
+            <div v-if="telemetryActions.length === 0"
+              class="h-full flex flex-col items-center justify-center text-slate-500 mt-20">
+              <svg class="w-16 h-16 mb-4 opacity-20 text-indigo-300 animate-pulse" fill="none" viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              <div class="tracking-widest uppercase text-xs font-semibold">
+                Waiting for Agent Action...
               </div>
             </div>
-          </div>
-
-          <!-- WALKTHROUGH UI -->
-          <div v-else-if="phase === 'done'" class="flex-1 overflow-y-auto p-8">
-            <div class="text-center mb-8">
-              <div
-                class="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]"
-              >
-                <svg
-                  class="w-10 h-10 text-emerald-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </div>
-              <h2 class="text-2xl font-bold text-slate-100">Project Walkthrough</h2>
-              <p class="text-slate-400 mt-2">
-                All tasks completed successfully in {{formatTime(globalStartTime)}}.
-              </p>
-            </div>
-
-            <div
-              v-if="executionSummary"
-              class="bg-slate-800/50 border border-emerald-500/20 rounded-xl p-6 shadow-lg mb-6 max-w-2xl mx-auto"
-            >
-              <h3 class="text-lg font-semibold text-emerald-300 mb-4">Execution Summary</h3>
-              <div class="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span class="text-slate-400 block mb-1">Total Tasks</span>
-                  <span class="text-slate-200 font-bold text-lg">{{executionSummary.total}}</span>
-                </div>
-                <div>
-                  <span class="text-slate-400 block mb-1">Completed</span>
-                  <span class="text-emerald-400 font-bold text-lg">{{executionSummary.done}}</span>
-                </div>
-                <div>
-                  <span class="text-slate-400 block mb-1">Review Cycles</span>
-                  <span class="text-amber-300 font-bold text-lg"
-                    >{{executionSummary.total_review_cycles}}</span
-                  >
-                </div>
-                <div>
-                  <span class="text-slate-400 block mb-1">Total Tokens</span>
-                  <span class="text-sky-300 font-bold text-lg">{{tokens.toLocaleString()}}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div v-else class="flex-1 flex items-center justify-center text-slate-500 text-lg">
-            Processing Pipeline...
           </div>
         </div>
 
-        <!-- Right: Activity Log & Process Queue -->
-        <div class="glass w-80 shrink-0 rounded-2xl overflow-hidden flex flex-col">
-          <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
-            <h2 class="font-semibold text-slate-200 flex items-center gap-2">
-              <svg
-                class="w-4 h-4 text-amber-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
+        <!-- WALKTHROUGH UI -->
+        <div v-else-if="phase === 'done'" class="flex-1 overflow-y-auto p-8">
+          <div class="text-center mb-8">
+            <div
+              class="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
+              <svg class="w-10 h-10 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
-              System Log
-            </h2>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-100">Project Walkthrough</h2>
+            <p class="text-slate-400 mt-2">
+              All tasks completed successfully in {{formatTime(globalStartTime)}}.
+            </p>
+            <button @click="viewHistory"
+              class="mt-4 px-4 py-2 bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 border border-indigo-500/50 rounded transition-colors text-sm font-semibold">查看历史记录日志</button>
           </div>
-          <div class="flex-1 overflow-y-auto p-4 font-mono text-[11px]">
-            <TransitionGroup name="list" tag="div" class="space-y-3">
-              <div
-                v-for="log in sortedLogs"
-                :key="log.id"
-                class="flex gap-2 items-start opacity-80 hover:opacity-100 transition-opacity"
-              >
-                <span class="text-slate-500 shrink-0 select-none">[{{log.timeText}}]</span>
-                <div
-                  :class="{
+
+          <div v-if="executionSummary"
+            class="bg-slate-800/50 border border-emerald-500/20 rounded-xl p-6 shadow-lg mb-6 max-w-2xl mx-auto">
+            <h3 class="text-lg font-semibold text-emerald-300 mb-4">Execution Summary</h3>
+            <div class="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span class="text-slate-400 block mb-1">Total Tasks</span>
+                <span class="text-slate-200 font-bold text-lg">{{executionSummary.total}}</span>
+              </div>
+              <div>
+                <span class="text-slate-400 block mb-1">Completed</span>
+                <span class="text-emerald-400 font-bold text-lg">{{executionSummary.done}}</span>
+              </div>
+              <div>
+                <span class="text-slate-400 block mb-1">Review Cycles</span>
+                <span class="text-amber-300 font-bold text-lg">{{executionSummary.total_review_cycles}}</span>
+              </div>
+              <div>
+                <span class="text-slate-400 block mb-1">Total Tokens</span>
+                <span class="text-sky-300 font-bold text-lg">{{tokens.toLocaleString()}}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="flex-1 flex items-center justify-center text-slate-500 text-lg">
+          Processing Pipeline...
+        </div>
+      </div>
+
+      <!-- Right: Activity Log & Process Queue -->
+      <div class="glass w-80 shrink-0 rounded-2xl overflow-hidden flex flex-col">
+        <div class="px-5 py-4 border-b border-white/5 bg-white/[0.02]">
+          <h2 class="font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            System Log
+          </h2>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 font-mono text-[11px]">
+          <TransitionGroup name="list" tag="div" class="space-y-3">
+            <div v-for="log in sortedLogs" :key="log.id"
+              class="flex gap-2 items-start opacity-80 hover:opacity-100 transition-opacity">
+              <span class="text-slate-500 shrink-0 select-none">[{{log.timeText}}]</span>
+              <div :class="{
                 'text-indigo-300': log.type === 'start',
                 'text-emerald-400': log.type === 'done',
                 'text-rose-400': log.type === 'error',
                 'text-amber-300': log.type === 'review',
                 'text-sky-300': log.type === 'milestone',
                 'text-slate-400': log.type === 'info'
-              }"
-                  class="break-words w-full"
-                >
-                  {{log.message}}
-                </div>
+              }" class="break-words w-full">
+                {{log.message}}
               </div>
-            </TransitionGroup>
-          </div>
+            </div>
+          </TransitionGroup>
         </div>
       </div>
     </div>
 
-    <script>
-      const { createApp, ref, computed, onMounted, nextTick } = Vue;
+    <!-- History Modal -->
+    <div v-if="false" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8"
+      @click.self="historyModalVisible = false">
+      <div
+        class="bg-slate-900 border border-slate-700 w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+          <h3 class="text-lg font-bold text-slate-200">Execution History Log</h3>
+          <button @click="closeHistoryModal" class="text-slate-400 hover:text-white">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="flex-1 overflow-auto p-4 custom-scrollbar text-sm font-mono text-slate-300">
+          <div v-if="!historyLogContent" class="h-full flex items-center justify-center text-slate-500">Loading logs...
+          </div>
+          <pre>{{historyLogContent}}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
 
-      createApp({
-        setup() {
-          const state = ref('Starting...');
-          const phase = ref('idle');
-          const tokens = ref(0);
-          const globalStartTime = ref(Date.now());
+  <script>
+    const { createApp, ref, computed, onMounted, nextTick } = Vue;
 
-          const plan = ref(null);
-          const thinkMessages = ref([]);
-          const activeTasksMap = ref(new Map());
-          const completedTasks = ref(new Set());
-          const failedTasks = ref(new Set());
+    /**
+     * 富文本工具输出渲染器
+     * 根据不同的工具类型，输出对人类最易读的特制 HTML UI，而不只是纯 JSON
+     */
+    const ToolHTMLRenderer = {
+      render(toolName, contentStr) {
+        if (!contentStr) return '';
+        try {
+          let cleanStr = String(contentStr);
+          let isCacheHit = false;
+          if (cleanStr.startsWith('(Cache Hit) ')) {
+            isCacheHit = true;
+            cleanStr = cleanStr.substring(12);
+          }
+          const trimmed = cleanStr.trim();
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            const parsed = JSON.parse(trimmed);
+            const payload = this.extractCorePayload(parsed);
+            const html = this.renderSpecificTool(toolName, payload);
+            return isCacheHit ? `<div class="mb-2 text-indigo-400 font-bold flex items-center">✨ Cache Hit</div>${html}` : html;
+          }
+        } catch(e) { } 
 
-          const telemetryActions = ref([]);
-          const executionSummary = ref(null);
-          const activeWait = ref(null);
+        return `<pre class="whitespace-pre-wrap text-slate-300">${this.escapeHtml(contentStr)}</pre>`;
+      },
 
-          const logs = ref([]);
-          let logCounter = 0;
+      escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      },
 
-          const addLog = (type, message) => {
-            const now = new Date();
-            logs.value.unshift({
-              id: ++logCounter,
-              type,
-              message,
-              timeText: now.toLocaleTimeString([], {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              }),
-            });
-            if (logs.value.length > 200) logs.value.pop();
-          };
+      extractCorePayload(opt) {
+        if (!opt || typeof opt !== 'object') return opt;
+        if ('result' in opt) {
+          if (opt.result && typeof opt.result === 'object' && 'result' in opt.result) {
+             return opt.result.result;
+          }
+          return opt.result;
+        }
+        if ('results' in opt) return opt.results;
+        if ('output' in opt) return opt.output;
+        return opt;
+      },
 
-          const scrollToBottom = () => {
-            nextTick(() => {
-              const container = document.getElementById('chat-container');
-              if (container) container.scrollTop = container.scrollHeight;
-            });
-          };
+      renderSpecificTool(toolName, payload) {
+        if (typeof payload !== 'object' || payload === null) {
+          return `<pre class="whitespace-pre-wrap text-slate-300">${this.escapeHtml(payload)}</pre>`;
+        }
 
-          // Parse thinker output which usually looks like "\n--- 🕵️ 研究员 初稿 ---\nTEXT" or just raw string
-          const parseThinkMessage = (rawStr) => {
-            let role = 'System';
-            let content = rawStr;
+        if (payload.success === false && payload.error) {
+          return `<div class="bg-red-500/10 border border-red-500/30 text-red-400 p-2 rounded">
+            <strong>Error:</strong> ${this.escapeHtml(payload.error)}
+          </div>`;
+        }
 
-            if (rawStr.includes('--- 🕵️ 研究员')) role = 'Researcher';
-            else if (rawStr.includes('--- 🧠 逻辑学家')) role = 'Logician';
-            else if (rawStr.includes('--- 🎨 创意人员')) role = 'Creative';
-            else if (
-              rawStr.startsWith('原问题') ||
-              rawStr.includes('完美答案') ||
-              rawStr.includes('最终共识解答')
-            )
-              role = 'Captain';
+        switch(toolName) {
+          case 'read_multiple_files':
+            if (payload.files && Array.isArray(payload.files)) {
+              return `<div class="flex flex-col gap-2">` + payload.files.map(f => `
+                <div class="border border-slate-700/60 rounded bg-slate-800/20 overflow-hidden">
+                  <div class="px-2 py-1 bg-slate-800/80 flex justify-between items-center text-[10px] text-slate-400">
+                    <span class="font-bold truncate text-sky-300" title="${this.escapeHtml(f.file_path)}">📄 ${this.escapeHtml(f.file_path.split(/[\\\\/]/).pop())}</span>
+                    <span class="text-slate-500 shrink-0">${f.size ? (f.size / 1024).toFixed(1) + ' KB' : ''}</span>
+                  </div>
+                  <div class="p-2 max-h-40 overflow-y-auto custom-scrollbar">
+                    <pre class="text-[10px] whitespace-pre-wrap text-slate-300">${this.escapeHtml(f.content)}</pre>
+                  </div>
+                </div>
+              `).join('') + `</div>`;
+            }
+            break;
 
-            // Cleanly remove the header line without deleting markdown tables or <hr> tags
-            content = rawStr
-              .replace(/^\s*---\s*(?:🕵️ 研究员|🧠 逻辑学家|🎨 创意人员)(.*?)---\s*\n?/m, '')
-              .trim();
+          case 'bash_execute':
+          case 'git_status':
+          case 'git_diff':
+          case 'npm_run':
+          case 'npm_install':
+            if ('command' in payload || 'stdout' in payload) {
+              const cmd = payload.command ? `<div class="text-emerald-400 select-none font-bold mb-1">$ ${this.escapeHtml(payload.command)}</div>` : '';
+              const stdout = payload.stdout ? `<div class="text-slate-300">${this.escapeHtml(payload.stdout)}</div>` : '';
+              const stderr = payload.stderr ? `<div class="text-rose-400 mt-1">${this.escapeHtml(payload.stderr)}</div>` : '';
+              const code = payload.exit_code !== undefined ? `<div class="mt-2 text-slate-500 text-[10px]">Exit Code: ${payload.exit_code}</div>` : '';
+              return `<div class="bg-black/40 p-2.5 rounded border border-slate-700/80 font-mono text-[10px] overflow-hidden whitespace-pre-wrap custom-scrollbar max-h-60 overflow-y-auto">${cmd}${stdout}${stderr}${code}</div>`;
+            }
+            break;
 
-            return { role, content };
-          };
+          case 'read_file':
+          case 'edit_file':
+            if (payload.content) {
+              const filepath = payload.file_path || payload.file || 'File content';
+              return `<div class="border border-slate-700/60 rounded overflow-hidden flex flex-col">
+                <div class="px-2 py-1.5 bg-slate-800/80 text-[10px] text-sky-300 font-bold truncate">📄 ${this.escapeHtml(filepath)}</div>
+                <pre class="p-2 max-h-60 overflow-y-auto whitespace-pre-wrap text-[10px] custom-scrollbar bg-slate-900/30 text-slate-300">${this.escapeHtml(payload.content)}</pre>
+              </div>`;
+            }
+            break;
 
-          const handleEvent = (event, data) => {
+          case 'list_directory':
+            if (payload.items && Array.isArray(payload.items)) {
+              const dirPath = payload.dir_path || 'Directory';
+              let itemsHtml = payload.items.slice(0, 15).map(i => {
+                const icon = i.isDirectory ? '📁' : '📄';
+                const color = i.isDirectory ? 'text-indigo-300' : 'text-slate-300';
+                return `<div class="flex gap-2 items-center text-[10px] ${color} truncate py-0.5"><span class="w-4 text-center">${icon}</span> ${this.escapeHtml(i.name)}</div>`;
+              }).join('');
+              if (payload.items.length > 15) {
+                itemsHtml += `<div class="text-slate-500 text-[10px] mt-1 pl-6">... 共 ${payload.items.length} 个项目</div>`;
+              }
+              return `<div class="bg-slate-800/30 border border-slate-700 p-2.5 rounded">
+                <div class="text-cyan-400 text-xs mb-2 font-bold select-all">${this.escapeHtml(dirPath)}</div>
+                ${itemsHtml}
+              </div>`;
+            }
+            break;
+            
+          case 'lsp_diagnostics':
+            if (payload.error) {
+               return `<div class="text-amber-400 bg-amber-400/10 border border-amber-400/30 p-2 rounded text-[11px]">⚠️ ${this.escapeHtml(payload.error)}</div>`;
+            }
+            if (Array.isArray(payload) && payload.length === 0) {
+               return `<div class="text-emerald-400 text-[11px] p-2 bg-emerald-400/10 rounded">✅ 无警告或错误</div>`;
+            }
+            break;
+        }
+
+        const simple = this.simplifyObject(payload);
+        return `<div class="bg-slate-900/60 p-2 rounded border border-slate-800">
+          <pre class="whitespace-pre-wrap text-slate-400">${this.escapeHtml(JSON.stringify(simple, null, 2))}</pre>
+        </div>`;
+      },
+
+      simplifyObject(obj, depth = 0) {
+        if (depth > 5) return '[Max Depth Reached]';
+        if (obj === null || obj === undefined) return obj;
+        if (Array.isArray(obj)) {
+          if (obj.length > 20) {
+            const sliced = obj.slice(0, 5).map(item => this.simplifyObject(item, depth + 1));
+            sliced.push(`... [共 ${obj.length} 项，已折叠中间项] ...`);
+            sliced.push(this.simplifyObject(obj[obj.length - 1], depth + 1));
+            return sliced;
+          }
+          return obj.map(item => this.simplifyObject(item, depth + 1));
+        }
+        if (typeof obj === 'object') {
+          const newObj = {};
+          for (const [key, value] of Object.entries(obj)) {
+            if (['success', 'duration_ms', 'tool'].includes(key) && depth === 0) continue;
+            newObj[key] = this.simplifyObject(value, depth + 1);
+          }
+          return newObj;
+        }
+        if (typeof obj === 'string') {
+          if (obj.length > 1000) return obj.substring(0, 1000) + `...\\n[段落被智能截断，总 ${obj.length} 字符]`;
+        }
+        return obj;
+      }
+    };
+
+    const app = createApp({
+      components: {
+        'pre-text': window.__pretext_component__
+      },
+      setup() {
+        const state = ref('Starting...');
+        const phase = ref('idle');
+        const engineState = ref('running'); // 'running' or 'paused'
+        const tokens = ref(0);
+        const globalStartTime = ref(Date.now());
+        const historyModalVisible = ref(false);
+        const historyLogContent = ref('');
+
+        const plan = ref(null);
+        const thinkMessages = ref([]);
+        const activeTasksMap = ref(new Map());
+        const completedTasks = ref(new Set());
+        const failedTasks = ref(new Set());
+
+        const telemetryActions = ref([]);
+        const executionSummary = ref(null);
+        const activeWait = ref(null);
+
+        const logs = ref([]);
+        let logCounter = 0;
+
+        const addLog = (type, message) => {
+          const now = new Date();
+          logs.value.unshift({
+            id: ++logCounter,
+            type,
+            message,
+            timeText: now.toLocaleTimeString([], {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            }),
+          });
+          if (logs.value.length > 200) logs.value.pop();
+        };
+
+        const scrollToBottom = () => {
+          nextTick(() => {
+            const container = document.getElementById('chat-container');
+            if (container) container.scrollTop = container.scrollHeight;
+          });
+        };
+
+        const closeHistoryModal = () => {
+          console.log('closeHistoryModal');
+          historyModalVisible.value = false;
+        };
+
+        // Parse thinker output which usually looks like "\n--- 🕵️ 研究员 初稿 ---\nTEXT" or just raw string
+        const parseThinkMessage = (rawStr) => {
+          let role = 'System';
+          let content = rawStr;
+
+          if (rawStr.includes('--- 🕵️ 研究员')) role = 'Researcher';
+          else if (rawStr.includes('--- 🧠 逻辑学家')) role = 'Logician';
+          else if (rawStr.includes('--- 🎨 创意人员')) role = 'Creative';
+          else if (
+            rawStr.startsWith('原问题') ||
+            rawStr.includes('完美答案') ||
+            rawStr.includes('最终共识解答')
+          )
+            role = 'Captain';
+
+          // Cleanly remove the header line without deleting markdown tables or <hr> tags
+          content = rawStr
+            .replace(/^\s*---\s*(?:🕵️ 研究员|🧠 逻辑学家|🎨 创意人员)(.*?)---\s*\n?/m, '')
+            .trim();
+
+          return { role, content };
+        };
+
+        const handleEvent = (event, data) => {
+          try {
             state.value = 'Running';
 
             if (event === 'think:start') {
@@ -808,19 +834,51 @@
                 minute: '2-digit',
                 second: '2-digit',
               });
-              telemetryActions.value.unshift({
-                id: Date.now() + Math.random(),
-                agent: data.agent,
-                type: data.type || 'tool',
-                tool: data.tool,
-                target:
-                  data.args?.file_path ||
-                  data.args?.command ||
-                  JSON.stringify(data.args || {}).substring(0, 60),
-                content: data.content,
-                time: actionTime,
-              });
-              if (telemetryActions.value.length > 100) telemetryActions.value.pop();
+              const targetStr = data.args?.file_path || data.args?.command || JSON.stringify(data.args || {}).substring(0, 60);
+
+              if (data.type === 'tool_start') {
+                telemetryActions.value.unshift({
+                  id: Date.now() + Math.random(),
+                  toolCallId: data.toolCallId,
+                  agent: data.agent,
+                  type: 'tool_loading',
+                  tool: data.tool,
+                  target: targetStr,
+                  content: data.content,
+                  time: actionTime,
+                });
+                if (telemetryActions.value.length > 100) telemetryActions.value.pop();
+              } else if (data.type === 'tool_result_update') {
+                const existing = telemetryActions.value.find(a => a.toolCallId === data.toolCallId);
+                if (existing) {
+                  existing.type = data.success ? 'tool_done' : 'tool_error';
+                  existing.content = data.content;
+                  existing.time = actionTime;
+                } else {
+                  telemetryActions.value.unshift({
+                    id: Date.now() + Math.random(),
+                    toolCallId: data.toolCallId,
+                    agent: data.agent,
+                    type: data.success ? 'tool_done' : 'tool_error',
+                    tool: data.tool,
+                    target: targetStr,
+                    content: data.content,
+                    time: actionTime,
+                  });
+                  if (telemetryActions.value.length > 100) telemetryActions.value.pop();
+                }
+              } else {
+                telemetryActions.value.unshift({
+                  id: Date.now() + Math.random(),
+                  agent: data.agent,
+                  type: data.type || 'tool',
+                  tool: data.tool,
+                  target: targetStr,
+                  content: data.content,
+                  time: actionTime,
+                });
+                if (telemetryActions.value.length > 100) telemetryActions.value.pop();
+              }
             } else if (event === 'task:start') {
               const task = data.task || data;
               activeTasksMap.value.set(task.id, task);
@@ -854,120 +912,197 @@
               executionSummary.value = data.result.summary;
               if (data.duration) globalStartTime.value = Date.now() - data.duration * 1000;
               addLog('milestone', 'Execution Finished!');
+            } else if (event === 'engine:paused') {
+              engineState.value = 'paused';
+            } else if (event === 'engine:resumed') {
+              engineState.value = 'running';
             }
-          };
+          } catch (err) {
+            addLog('error', `Event processing error: ${err.message}`);
+          }
+        };
 
-          const formatTime = (timestamp) => {
-            const s = Math.floor((Date.now() - timestamp) / 1000);
-            return `${Math.floor(s / 60)}m ${s % 60}s`;
-          };
+        const formatTime = (timestamp) => {
+          const s = Math.floor((Date.now() - timestamp) / 1000);
+          return `${Math.floor(s / 60)}m ${s % 60}s`;
+        };
 
-          const getTaskDesc = (id) => {
-            if (!plan.value) return id;
-            const t = plan.value.tasks.find((x) => x.id === id);
-            return t ? t.description : id;
-          };
+        const getTaskDesc = (id) => {
+          if (!plan.value) return id;
+          const t = plan.value.tasks.find((x) => x.id === id);
+          return t ? t.description : id;
+        };
 
-          const renderMarkdown = (text) => {
-            if (!text) return '';
+        const renderMarkdown = (text) => {
+          if (!text) return '';
 
-            let processed = text;
-            // Handle <think> tags specifically, closing them if they're truncated
-            processed = processed.replace(
-              /<think>([\s\S]*?)(?:<\/think>|$)/gi,
-              (match, innerText) => {
-                return `\n<details class="bg-slate-800/80 rounded my-2 border border-slate-700 overflow-hidden think-block">
+          let processed = text;
+          // Handle <think> tags specifically, closing them if they're truncated
+          processed = processed.replace(
+            /<think>([\s\S]*?)(?:<\/think>|$)/gi,
+            (match, innerText) => {
+              return `\n<details class="bg-slate-800/80 rounded my-2 border border-slate-700 overflow-hidden think-block">
 <summary class="px-3 py-1.5 cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/80 flex items-center select-none">🧠 AI 思考过程 (点击展开/折叠)</summary>
 <div class="p-3 text-slate-300 text-sm border-t border-slate-700/50 prose prose-invert prose-sm max-w-none">
 \n${innerText}\n
 </div>
 </details>\n`;
-              },
-            );
+            },
+          );
 
-            return window.marked.parse(processed, { breaks: true });
+          return window.marked.parse(processed, { breaks: true });
+        };
+
+        const getRoleColor = (role) => {
+          if (role === 'Researcher') return 'text-blue-400';
+          if (role === 'Logician') return 'text-amber-400';
+          if (role === 'Creative') return 'text-fuchsia-400';
+          if (role === 'Captain') return 'text-emerald-400';
+          return 'text-slate-400';
+        };
+
+        const getToolName = (tool) => {
+          const map = {
+            'read_file': '读取文件', 'write_file': '写入文件', 'edit_file': '修改文件', 'delete_file': '删除文件',
+            'list_directory': '列出目录', 'bash_execute': '执行终端', 'browser_navigate': '浏览器导航',
+            'browser_click': '浏览器点击', 'browser_type': '浏览器输入', 'browser_evaluate': '执行JS',
+            'npm_run': '运行脚本', 'npm_install': '安装依赖', 'git_status': '查看Git态',
+            'git_diff': '查看变更', 'lsp_diagnostics': 'LSP语法', 'read_multiple_files': '读取多个文件', 'create_directory': '创建目录'
+          };
+          return map[tool] || tool;
+        };
+
+        const renderToolHTML = (toolName, contentStr) => {
+          return ToolHTMLRenderer.render(toolName, contentStr);
+        };
+
+        const phaseColor = computed(() => {
+          if (state.value === 'Disconnected') return 'bg-red-500 shadow-red-500/30';
+          if (phase.value === 'done' || phase.value === 'think_done')
+            return 'bg-emerald-500 shadow-emerald-500/30';
+          return 'bg-indigo-500 shadow-indigo-500/30';
+        });
+        const phaseBorder = computed(() => {
+          if (phase.value === 'done' || phase.value === 'think_done') return 'border-emerald-400';
+          return 'border-indigo-400';
+        });
+
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        let evtSource = null;
+        let timer = null;
+
+        const connectSSE = () => {
+          if (evtSource) evtSource.close();
+          addLog('info', 'Connecting to Application Manager...');
+          evtSource = new EventSource('/events');
+
+          evtSource.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              handleEvent(msg.event, msg.data);
+            } catch (err) {
+              addLog('error', `SSE message parse error: ${err.message}`);
+            }
           };
 
-          const getRoleColor = (role) => {
-            if (role === 'Researcher') return 'text-blue-400';
-            if (role === 'Logician') return 'text-amber-400';
-            if (role === 'Creative') return 'text-fuchsia-400';
-            if (role === 'Captain') return 'text-emerald-400';
-            return 'text-slate-400';
-          };
-
-          const phaseColor = computed(() => {
-            if (state.value === 'Disconnected') return 'bg-red-500 shadow-red-500/30';
-            if (phase.value === 'done' || phase.value === 'think_done')
-              return 'bg-emerald-500 shadow-emerald-500/30';
-            return 'bg-indigo-500 shadow-indigo-500/30';
-          });
-          const phaseBorder = computed(() => {
-            if (phase.value === 'done' || phase.value === 'think_done') return 'border-emerald-400';
-            return 'border-indigo-400';
-          });
-
-          onMounted(() => {
-            addLog('info', 'Connecting to Application Manager...');
-            const evtSource = new EventSource('/events');
-
-            evtSource.onmessage = (e) => {
-              try {
-                const msg = JSON.parse(e.data);
-                handleEvent(msg.event, msg.data);
-              } catch (err) {}
-            };
-
-            let timer;
-            evtSource.onerror = () => {
-              addLog('error', 'Connection ended (Server process exited). No reconnecting.');
+          evtSource.onerror = () => {
+            evtSource.close();
+            if (state.value !== 'Disconnected' && reconnectAttempts < maxReconnectAttempts) {
+              reconnectAttempts++;
+              const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+              addLog('error', `Connection lost. Reconnecting in ${delay / 1000}s... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+              setTimeout(connectSSE, delay);
+            } else if (reconnectAttempts >= maxReconnectAttempts) {
+              addLog('error', 'Max reconnection attempts reached. Please refresh the page.');
               state.value = 'Disconnected';
-              evtSource.close();
-              if (timer) clearInterval(timer);
-            };
-
-            timer = setInterval(() => {
-              if (activeTasksMap.value.size >= 0) {
-                tokens.value = tokens.value;
-              }
-              if (activeWait.value) {
-                const left = Math.ceil((activeWait.value.endTime - Date.now()) / 1000);
-                if (left <= 0) {
-                  activeWait.value = null;
-                } else {
-                  activeWait.value.timeLeft = left;
-                }
-              }
-            }, 1000);
-          });
-
-          const activeTasksArray = computed(() => Array.from(activeTasksMap.value.values()));
-          const sortedLogs = computed(() => logs.value);
-
-          return {
-            state,
-            phase,
-            tokens,
-            plan,
-            thinkMessages,
-            activeTasksMap,
-            completedTasks,
-            failedTasks,
-            telemetryActions,
-            executionSummary,
-            activeWait,
-            activeTasksArray,
-            sortedLogs,
-            globalStartTime,
-            formatTime,
-            getTaskDesc,
-            getRoleColor,
-            phaseColor,
-            phaseBorder,
-            renderMarkdown,
+            } else {
+              state.value = 'Disconnected';
+            }
           };
-        },
-      }).mount('#app');
-    </script>
-  </body>
+        };
+
+        onMounted(() => {
+          connectSSE();
+
+          timer = setInterval(() => {
+            if (activeTasksMap.value.size >= 0) {
+              tokens.value = tokens.value;
+            }
+            if (activeWait.value) {
+              const left = Math.ceil((activeWait.value.endTime - Date.now()) / 1000);
+              if (left <= 0) {
+                activeWait.value = null;
+              } else {
+                activeWait.value.timeLeft = left;
+              }
+            }
+          }, 1000);
+        });
+
+        const activeTasksArray = computed(() => Array.from(activeTasksMap.value.values()));
+        const sortedLogs = computed(() => logs.value);
+
+        const toggleEngine = async () => {
+          const endpoint = engineState.value === 'paused' ? '/api/resume' : '/api/pause';
+          try {
+            await fetch(endpoint, { method: 'POST' });
+            // state will update via SSE 'engine:paused' / 'engine:resumed' events
+          } catch (e) {
+            addLog('error', `Failed to send control command: ${e.message}`);
+          }
+        };
+
+        const viewHistory = async () => {
+          historyModalVisible.value = true;
+          historyLogContent.value = '';
+          try {
+            const res = await fetch('/api/logs');
+            if (res.ok) {
+              historyLogContent.value = await res.text();
+            } else {
+              historyLogContent.value = 'Failed to load recent history log. ' + res.status;
+            }
+          } catch (e) {
+            historyLogContent.value = 'Fetch error: ' + e.message;
+          }
+        };
+
+        return {
+          state,
+          phase,
+          tokens,
+          plan,
+          thinkMessages,
+          activeTasksMap,
+          completedTasks,
+          failedTasks,
+          telemetryActions,
+          executionSummary,
+          activeWait,
+          activeTasksArray,
+          sortedLogs,
+          globalStartTime,
+          formatTime,
+          getTaskDesc,
+          getRoleColor,
+          getToolName,
+          renderToolHTML,
+          phaseColor,
+          phaseBorder,
+          renderMarkdown,
+          engineState,
+          toggleEngine,
+          viewHistory,
+          historyModalVisible,
+          historyLogContent,
+        };
+      },
+    });
+
+    app.config.compilerOptions.isCustomElement = tag => tag === 'pre-text';
+    app.mount('#app');
+  </script>
+</body>
+
 </html>

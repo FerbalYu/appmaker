@@ -1,5 +1,5 @@
 import path from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +33,8 @@ export class ProgressMonitor {
       'task:retry_wait',
       'agent:action',
       'execution:done',
+      'engine:paused',
+      'engine:resumed',
     ];
 
     eventsToForward.forEach((eventName) => {
@@ -129,11 +131,47 @@ export class ProgressMonitor {
       try {
         const content = readFileSync(path.join(__dirname, 'public', 'index.html'));
         return new Response(content, {
-          headers: { 'Content-Type': 'text/html' },
+          headers: { 
+            'Content-Type': 'text/html',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          },
         });
       } catch {
         return new Response('Error loading dashboard', { status: 500 });
       }
+    }
+
+    // API 端点
+    if (url.pathname === '/api/pause' && req.method === 'POST') {
+      this.bus.emit('control:pause');
+      return new Response(JSON.stringify({ status: 'paused' }), {
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    if (url.pathname === '/api/resume' && req.method === 'POST') {
+      this.bus.emit('control:resume');
+      return new Response(JSON.stringify({ status: 'resumed' }), {
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    }
+
+    if (url.pathname === '/api/logs' && req.method === 'GET') {
+      try {
+        const executeDir = process.cwd();
+        const logsDir = path.join(executeDir, '.ncf', 'logs', 'execution');
+        const files = readdirSync(logsDir).filter(f => f.endsWith('.log') || f.endsWith('.md')).sort().reverse();
+        if (files.length > 0) {
+          // 只取最近的一个进行渲染，或者取前几个合并
+          const content = readFileSync(path.join(logsDir, files[0]), 'utf-8');
+          return new Response(content, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
+        }
+      } catch (err) {
+        // 忽略不存在等情况
+      }
+      return new Response('No logs found', { status: 404, headers: { 'Access-Control-Allow-Origin': '*' } });
     }
 
     return new Response(null, { status: 404 });

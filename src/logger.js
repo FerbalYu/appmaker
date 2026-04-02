@@ -3,7 +3,7 @@ import path from 'path';
 
 export class Logger {
   constructor(options = {}) {
-    this.logDir = options.logDir || path.join(process.cwd(), '.appmaker', 'logs');
+    this.logDir = options.logDir || path.join(process.cwd(), '.ncf', 'logs');
     this.level = options.level || 'info';
     this.initialized = false;
   }

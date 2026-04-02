@@ -1,4 +1,4 @@
-# appMaker
+# NexusCodeForge (NCF)
 
 > AI 驱动的 APP 全自动开发系统 — 从「一句话需求」到「可交付代码」，零人工干预。
 
@@ -47,7 +47,7 @@ curl -fsSL https://bun.sh/install | bash
 ### 1. 安装
 
 ```bash
-git clone <repo-url> && cd appmaker
+git clone <repo-url> && cd nexus-code-forge
 bun install
 cp .env.example .env
 ```
@@ -248,7 +248,7 @@ const results = await dispatchParallel([
 ## 项目结构
 
 ```
-appmaker/
+nexus-code-forge/
 ├── cli.js                        # CLI 入口
 ├── daemon.js                     # 守护进程入口
 ├── src/
@@ -327,4 +327,4 @@ appmaker/
 
 ## 许可证
 
-ISC © appMaker Contributors
+ISC © NexusCodeForge Contributors

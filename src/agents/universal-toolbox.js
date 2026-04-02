@@ -125,7 +125,7 @@ async function copyDir(src, dest) {
 
 export class UniversalToolbox {
   constructor(config = {}) {
-    if (process.env.APPMAKER_MOCK === '1' && new.target === UniversalToolbox) {
+    if (process.env.NCF_MOCK === '1' && new.target === UniversalToolbox) {
       return new SandboxToolbox(config);
     }
 
@@ -1017,7 +1017,7 @@ export class UniversalToolbox {
         path: urlObj.pathname + urlObj.search,
         method,
         headers: {
-          'User-Agent': 'appMaker-UniversalToolbox/1.0',
+          'User-Agent': 'NexusCodeForge-UniversalToolbox/1.0',
           ...headers,
         },
       };
@@ -1233,7 +1233,7 @@ export class UniversalToolbox {
           });
           const client = new Client(
             {
-              name: `appMaker-LSP-${args.language}`,
+              name: `NexusCodeForge-LSP-${args.language}`,
               version: '1.0.0',
             },
             {},
@@ -2048,7 +2048,7 @@ export class UniversalToolbox {
       async (args) => {
         try {
           const response = await fetch(args.url, {
-            headers: { 'User-Agent': 'appMaker/1.0' },
+            headers: { 'User-Agent': 'NexusCodeForge/1.0' },
           });
           const text = await response.text();
           return {

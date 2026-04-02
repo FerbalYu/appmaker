@@ -149,13 +149,19 @@ export class NativeReviewerAdapter extends AgentAdapter {
 
       let codeToReview = '无需审查 (没有任何文件被创建或修改)';
       let filesReviewed = [];
+      let filesToRead = [];
 
-      if (task.context?.code_result) {
+      if (Array.isArray(task.files) && task.files.length > 0) {
+        filesToRead = [...task.files];
+      } else if (task.context?.code_result) {
         const cr = task.context.code_result.output || task.context.code_result;
-        const filesToRead = [...(cr.files_created || []), ...(cr.files_modified || [])];
+        filesToRead = [...(cr.files_created || []), ...(cr.files_modified || [])];
+      }
 
-        if (filesToRead.length > 0) {
-          const fileContents = await this._readFilesForReview(filesToRead, projectRoot);
+      filesToRead = [...new Set(filesToRead)];
+
+      if (filesToRead.length > 0) {
+        const fileContents = await this._readFilesForReview(filesToRead, projectRoot);
 
           if (fileContents.length > 0) {
             codeToReview = fileContents
@@ -170,7 +176,6 @@ export class NativeReviewerAdapter extends AgentAdapter {
             }
           }
         }
-      }
 
       const gitDiff = await this._getGitDiff(projectRoot);
       if (gitDiff) {

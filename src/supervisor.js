@@ -25,9 +25,9 @@ export class Supervisor {
     });
 
     this.config = {
-      maxTokens: 100000,
+      maxTokens: 50000000,
       maxErrors: 5,
-      maxReviewCycles: 3,
+      maxReviewCycles: 10,
       riskCheckInterval: 10000,
       ...config,
     };

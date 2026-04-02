@@ -78,7 +78,7 @@ async function cmdStart() {
   const daemonDataDir = dataDir || path.join(workingDir, '.daemon');
 
   console.log('='.repeat(60));
-  console.log('🔮 appMaker Daemon - 持久守护进程');
+  console.log('🔮 NCF Daemon - 持久守护进程');
   console.log('='.repeat(60));
   console.log('工作目录:', workingDir);
   console.log('数据目录:', daemonDataDir);
@@ -180,7 +180,7 @@ async function cmdTest() {
 
 function showHelp() {
   console.log(`
-🔮 appMaker Daemon - 持久守护进程
+🔮 NCF Daemon - 持久守护进程
 
 用法:
   bun daemon.js [命令] [选项]

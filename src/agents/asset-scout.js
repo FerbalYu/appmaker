@@ -21,24 +21,25 @@ const ASSET_SCOUT_CONFIG = {
 };
 
 const SYSTEM_PROMPT = `你是一个名为 AssetScout 的首席美术资源侦查员（兼策划适应专家）。
-你的目标是：根据被给予的粗略游戏需求，前往 https://kenney.nl/assets 寻找到最合适的开源 CC0 游戏素材。
-你可以直接调用浏览器工具 (Playwright) 搜索并下载对应的 zip 素材包。
+你的目标是：根据被给予的粗略游戏需求，前往 https://kenney.nl/assets 寻找到最合适的开源 CC0 游戏素材（必须多多益善，至少获取2-3批不同类型的相关素材，如角色+UI+环境）。
+你可以直接调用浏览器工具 (Playwright) 搜索并多次调用下载工具下载多个 zip 素材包。
 
 【工作流指导】
-1. 分析需求中的核心元素（如 射击、外星人、丧尸、平台跳跃 等）。
-2. 把合适的元素翻译成英文关键词（如 platformer, space, characters, UI）。
+1. 分析需求中的核心元素（如 射击、外星人、丧尸、平台跳跃、UI控件、游戏音效 等）。
+2. 把合适的元素翻译成英文关键词（如 platformer, space, characters, UI, audio）。
 3. 使用 browser_navigate 前往 https://kenney.nl/assets。
-4. 视情况使用 browser_click, browser_fill 等工具搜索关键词。浏览网页拿到你满意的素材包详情页或者是 zip 下载链接。如果找不到目标关键词对应的素材，请主动妥协寻找能平替的素材（如把丧尸替换为怪物）。
-5. 获取到确切素材包详情或 zip 链接后，调用专属的原生本地工具 \`download_and_extract_zip\`，该工具会在后台处理下载并解压，并返回文件名列表给你。注意：不能直接使用浏览器工具点击下载按钮（无头模式可能被拦截或无法获取文件存放路径），必须使用 \`download_and_extract_zip\` 来获取文件。
+4. 使用 browser_click, browser_fill 等工具搜索关键词。主动寻找能够组合搭档的素材包（如找了主角再去搜UI与特效包）。如果找不到完美的，请主动抓取热门或泛用素材保底。
+5. 获取到【每一个】你想下载的素材包详情页后，**分别多次调用**专属的原生本地工具 \`download_and_extract_zip\`，它会在后台处理下载并解压。
 
 【原生开发工具】：
-- \`download_and_extract_zip\` : 传入你想下载的 url（直接指向 kenney 包下载链接或详情页），由后台下载解压到 \`public/assets\` 目录下，并返回实际的文件名列表。
+- \`download_and_extract_zip\` : 传入你要下载的 url，必须是在 kenney 抓到的详情页链接。由后台下载解压到 \`public/assets\` 下，并返回文件列表。你可以连续调用它。
 
 【必须遵循的最终输出格式 JSON】:
-完成素材搜集后，你必须整合出以下格式的 JSON 结果并返回（必须只有合法的 JSON）：
+完成所有预定素材（至少2-3包）的下载后，你必须整合出以下格式的 JSON 结果并返回：
 {
   "theme_adapted": "最终决定或妥协使用的游戏主题说明",
-  "assets_found": ["文件1.png", "文件2.xml"],
+  "asset_packs_downloaded": ["获取到的素材包1", "素材包2"],
+  "assets_found": ["挑重点展示 20-30 个核心文件的相对路径 (public/assets/下)"],
   "advice": "给下一个环节（原画师/策划/程序）的适配建议"
 }`;
 
@@ -116,12 +117,14 @@ export class AssetScoutAdapter extends AgentAdapter {
 
       const allFiles = await getAllFiles(assetsDir);
 
+      const publicAssetsDir = path.join(projectRoot, 'public', 'assets');
+      
       return JSON.stringify({
         success: true,
         saved_dir: assetsDir,
         files: allFiles
           .filter((f) => !f.endsWith('.txt') && !f.endsWith('.pdf'))
-          .map((f) => path.relative(assetsDir, f))
+          .map((f) => path.relative(publicAssetsDir, f).replace(/\\/g, '/'))
           .slice(0, 80), // 限制返回数量
       });
     } catch (err) {
@@ -146,7 +149,7 @@ export class AssetScoutAdapter extends AgentAdapter {
       });
 
       mcpClient = new Client(
-        { name: 'appmaker-asset-scout', version: '1.0.0' },
+        { name: 'ncf-asset-scout', version: '1.0.0' },
         { capabilities: {} },
       );
 
@@ -189,8 +192,8 @@ export class AssetScoutAdapter extends AgentAdapter {
 
       let finalOutput = '';
 
-      // 对话大循环，最多 12 次 tool calls (抓网页和探索可能较慢)
-      for (let i = 0; i < 12; i++) {
+      // 对话大循环，最多 25 次 tool calls (多次搜索、翻页、多次下载需要大量回合)
+      for (let i = 0; i < 25; i++) {
         const payload = {
           model: this.model,
           messages,
@@ -256,6 +259,16 @@ export class AssetScoutAdapter extends AgentAdapter {
             const args = JSON.parse(toolCall.function.arguments || '{}');
             let toolResult;
 
+            if (typeof this.emit === 'function') {
+              this.emit('action', {
+                type: 'tool_start',
+                toolCallId: toolCall.id,
+                tool: toolCall.function.name,
+                args: args,
+                content: '⏳ 工具执行中...'
+              });
+            }
+
             try {
               if (toolCall.function.name === 'download_and_extract_zip') {
                 const resStr = await this._downloadAndExtractTool(
@@ -280,6 +293,17 @@ export class AssetScoutAdapter extends AgentAdapter {
             if (textOutput.length > 8000) {
               textOutput = textOutput.substring(0, 8000) + '... (output truncated due to length)';
             }
+
+            if (typeof this.emit === 'function') {
+              this.emit('action', {
+                type: 'tool_result_update',
+                toolCallId: toolCall.id,
+                tool: toolCall.function.name,
+                content: textOutput,
+                success: !textOutput.startsWith('Error:')
+              });
+            }
+
             messages.push({
               role: 'tool',
               name: toolCall.function.name,

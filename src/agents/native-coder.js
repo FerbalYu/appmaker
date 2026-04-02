@@ -262,6 +262,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
         const message = data.choices[0].message;
 
         // Emit Reasoning Process as Telemetry
+        let cleanedContent = message.content || '';
         if (message.reasoning_details && message.reasoning_details.length > 0) {
           const reasoningText = message.reasoning_details.map((r) => r.text).join('\n');
           if (typeof this.emit === 'function') {
@@ -269,11 +270,17 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
           }
         } else {
           // Fallback for non-Minimax models or if reasoning_split is not supported
-          const contentStr = message.content || '';
-          const thinkMatch = contentStr.match(/<think>([\s\S]*?)<\/think>/i);
+          const thinkMatch = cleanedContent.match(/<think>([\s\S]*?)<\/think>/i);
           if (thinkMatch && typeof this.emit === 'function') {
             this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
           }
+        }
+
+        // Strip <think> chunks from cleanedContent
+        cleanedContent = cleanedContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        // Emit the LLM's direct message intent to the user
+        if (cleanedContent && typeof this.emit === 'function') {
+          this.emit('action', { type: 'think', content: cleanedContent });
         }
 
         messages.push(message);
@@ -322,29 +329,21 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
             let toolResultObj;
             if (tool === 'write_file' || tool === 'edit_file') {
-              const fileOpResult = await this.executeTool(tool, args);
-              toolResultObj = fileOpResult;
-              if (fileOpResult.success) {
+              toolResultObj = await this.executeTool(tool, args, toolCall.id);
+              if (toolResultObj.success) {
                 console.log(`[${this.name}] 已保存文件: ${args.file_path}`);
               }
             } else if (tool === 'bash_execute' || tool === 'npm_run' || tool === 'npm_install') {
-              const cmdResult = await this.executeTool(tool, args);
-              toolResultObj = cmdResult;
-              console.log(`[${this.name}] 命令执行: ${tool}`, cmdResult.success ? '✓' : '✗');
+              toolResultObj = await this.executeTool(tool, args, toolCall.id);
+              console.log(`[${this.name}] 命令执行: ${tool}`, toolResultObj.success ? '✓' : '✗');
             } else {
-              toolResultObj = await this.executeTool(tool, args);
-            }
-
-            let textOutput =
-              typeof toolResultObj === 'string' ? toolResultObj : JSON.stringify(toolResultObj);
-            if (textOutput.length > 8000) {
-              textOutput = textOutput.substring(0, 8000) + '... (output truncated due to length)';
+              toolResultObj = await this.executeTool(tool, args, toolCall.id);
             }
 
             messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
-              content: textOutput,
+              content: typeof toolResultObj === 'string' ? toolResultObj : JSON.stringify(toolResultObj),
             });
           }
         }
@@ -376,7 +375,7 @@ ${projectContext.readmeSummary ? `## README 摘要\n${projectContext.readmeSumma
 
   async _detectFileChanges(dir, startTime) {
     const changes = { created: [], modified: [] };
-    const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.appmaker', '.daemon'];
+    const ignoreDirs = ['node_modules', '.git', 'dist', 'build', '.ncf', '.daemon'];
 
     const scan = async (currentDir) => {
       try {

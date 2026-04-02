@@ -6,14 +6,14 @@ export function validateConfig(config) {
   const errors = [];
 
   if (config.agents) {
-    if (config.agents['claude-code']) {
-      if (typeof config.agents['claude-code'].timeout_ms !== 'number') {
-        errors.push("agents['claude-code'].timeout_ms must be a number");
+    if (config.agents['native-coder']) {
+      if (typeof config.agents['native-coder'].timeout_ms !== 'number') {
+        errors.push("agents['native-coder'].timeout_ms must be a number");
       }
     }
-    if (config.agents.opencode) {
-      if (typeof config.agents.opencode.timeout_ms !== 'number') {
-        errors.push('agents.opencode.timeout_ms must be a number');
+    if (config.agents['native-reviewer']) {
+      if (typeof config.agents['native-reviewer'].timeout_ms !== 'number') {
+        errors.push("agents['native-reviewer'].timeout_ms must be a number");
       }
     }
   }

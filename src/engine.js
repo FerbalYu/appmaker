@@ -23,11 +23,11 @@ export class ExecutionEngine extends EventEmitter {
   constructor(config = {}) {
     super();
     this.config = {
-      max_review_cycles: 3,
+      max_review_cycles: 10,
       task_timeout: 300000,
       max_retries: 2,
       max_concurrent_tasks: 3,
-      token_budget: 100000,
+      token_budget: 50000000,
       idle_timeout_ms: 1800000,
       ...config,
     };
@@ -36,10 +36,12 @@ export class ExecutionEngine extends EventEmitter {
     this.checkpoints = [];
     this.logs = [];
     this.maxReviewCycles = this.config.max_review_cycles;
-    this.projectRoot = config.project_root || process.cwd();
     this.tokenUsage = { total: 0, byAgent: {} };
     this.halt = false;
     this.aborted = false;
+    this.paused = false;
+
+    this.projectRoot = this.config.project_root || process.cwd();
 
     this.dispatcher = new AgentDispatcher({
       native_reviewer_model: config.native_reviewer_model || 'MiniMax-Text-01',
@@ -110,8 +112,8 @@ export class ExecutionEngine extends EventEmitter {
         }
       }
 
-      if (this._checkResourceExhausted()) {
-        this._log('WARN', '⚠️ 资源耗尽，停止执行后续里程碑');
+      if (this.halt || this.aborted) {
+        this._log('WARN', '⚠️ 任务被外部强行中止');
         break;
       }
     }
@@ -207,6 +209,11 @@ export class ExecutionEngine extends EventEmitter {
         await Promise.race(executing.values());
       }
 
+      // Check for pause
+      while (this.paused && !this.halt && !this.aborted) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       if (this.halt || this.aborted) {
         this._log('WARN', '执行被中止，等待运行中的任务完成...');
         await Promise.allSettled(executing.values());
@@ -288,21 +295,27 @@ export class ExecutionEngine extends EventEmitter {
       (this.tokenUsage.byAgent['native-reviewer'] || 0) + reviewTokens;
 
     if (this.tokenUsage.total > this.config.token_budget) {
-      this._log(
-        'WARN',
-        `⚠️ Token 消耗超出预算 (${this.tokenUsage.total} > ${this.config.token_budget})`,
-      );
-      this.halt = true;
+      // Just emit warning, do NOT halt
       this.emit('budget:exceeded', { usage: this.tokenUsage, budget: this.config.token_budget });
     }
   }
 
   /**
-   * 检查资源是否耗尽
-   * @private
+   * Pause execution
    */
-  _checkResourceExhausted() {
-    return this.halt || this.tokenUsage.total > this.config.token_budget;
+  pause() {
+    this.paused = true;
+    this._log('INFO', '⏸️ 引擎已挂起 (Paused)');
+    this.emit('engine:paused');
+  }
+
+  /**
+   * Resume execution
+   */
+  resume() {
+    this.paused = false;
+    this._log('INFO', '▶️ 引擎恢复运行 (Resumed)');
+    this.emit('engine:resumed');
   }
 
   /**
@@ -349,6 +362,16 @@ export class ExecutionEngine extends EventEmitter {
     const filesCreated = codeResult.output?.files_created || [];
     const filesModified = codeResult.output?.files_modified || [];
     const totalFilesChanged = filesCreated.length + filesModified.length;
+
+    if (!task.subtasks || task.subtasks.length === 0) {
+      task.subtasks = [
+        ...filesCreated.map(f => `创建文件并完善逻辑: ${f}`),
+        ...filesModified.map(f => `修改代码并验证安全合规: ${f}`)
+      ];
+      if (task.subtasks.length > 0) {
+        this._log('INFO', `[${task.id}] 自动根据变更生成对应的 ${task.subtasks.length} 项子任务用于评审`);
+      }
+    }
 
     if (totalFilesChanged === 0) {
       this._log('WARN', `[${task.id}] ⚠️ native-coder 本次执行没有生成或修改任何文件`);
@@ -405,6 +428,7 @@ export class ExecutionEngine extends EventEmitter {
             id: `${task.id}_fix_${cycle}`,
             type: 'modify',
             description: fixPrompt,
+            subtasks: task.subtasks || [],
             files: [
               ...(codeResult.output?.files_created || []),
               ...(codeResult.output?.files_modified || []),
@@ -716,7 +740,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
     this.checkpoints.push(checkpoint);
 
     try {
-      const dir = path.join(this.projectRoot, '.appmaker', 'checkpoints');
+      const dir = path.join(this.projectRoot, '.ncf', 'checkpoints');
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
         path.join(dir, `${checkpoint.id}.json`),
@@ -757,7 +781,7 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
   async restore(checkpointId) {
     try {
       const cp = await fs.readFile(
-        path.join(this.projectRoot, '.appmaker', 'checkpoints', `${checkpointId}.json`),
+        path.join(this.projectRoot, '.ncf', 'checkpoints', `${checkpointId}.json`),
         'utf-8',
       );
       const checkpoint = JSON.parse(cp);

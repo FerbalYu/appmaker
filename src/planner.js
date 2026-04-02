@@ -102,7 +102,7 @@ export class Planner {
         title: `[${task.id}] ${task.description}`,
         description: desc,
         priority: task.type === 'architect' ? 'high' : 'medium',
-        tags: [task.type, plan.project?.name || 'appmaker'],
+        tags: [task.type, plan.project?.name || 'nexus-code-forge'],
       });
       if (result.success) {
         results.push({ taskId: task.id, ...result.result });
@@ -143,45 +143,6 @@ export class Planner {
     );
 
     let enhancedRequirement = requirement;
-
-    // 探测是否为游戏需求
-    const isGamePattern = /游戏|game|打怪|射击|消除|闯关|模拟|生存/i;
-    if (isGamePattern.test(requirement)) {
-      console.log(`[Planner] 🎮 探测到游戏/互动项目需求，正在呼叫 AssetScout 美术总监寻宝...`);
-      this._showSpinner(Date.now(), '通过 Playwright MCP 搜索可用素材...');
-      try {
-        const scoutResult = await this.dispatcher.dispatch({
-          id: 'asset_scouting',
-          type: 'scout',
-          description: requirement,
-          agent: 'asset-scout',
-          context: { project_root: this.projectRoot },
-        });
-
-        this._clearSpinner();
-
-        if (scoutResult.status === 'success' && scoutResult.output) {
-          const { theme_adapted, assets_found, advice } = scoutResult.output;
-          console.log(`[Planner] 🎨 美术总监素材获取成功！`);
-          console.log(`[Planner]   - 限定主题: ${theme_adapted}`);
-          console.log(`[Planner]   - 获取素材: ${assets_found?.length || 0} 个`);
-
-          enhancedRequirement =
-            `【原始需求】\n${requirement}\n\n` +
-            `【🚨最高指令：美术指导与适应性设计】\n` +
-            `美术侦查员已经通过 Playwright MCP 工具从 Kenney.nl 获得了如下素材，你必须根据这些文件名在代码里使用它们：\n` +
-            `[ ${(assets_found || []).join(', ')} ]\n\n` +
-            `美术侦查员确认的适应主题是：${theme_adapted}\n` +
-            `对架构设计的建议：${advice}\n\n` +
-            `请你立刻自动调整游戏剧本和核心机制，使其完全“妥协”于上述取得的物理资产！如果原始需求（比如找猫）与可用素材（比如只有车）发生冲突，必须改变题目为“赛车”。绝对禁止凭空捏造未下载的素材文件名！`;
-        } else {
-          console.log(`[Planner] ⚠️ 美术总监未获取到合适素材，回退到原计划。`);
-        }
-      } catch (err) {
-        this._clearSpinner();
-        console.log(`[Planner] ⚠️ AssetScout 执行暂不可用 (${err.message})，继续常规规划。`);
-      }
-    }
 
     console.log(`[Planner] 🤖 4-Agent 专家联合深度需求分析中...`);
     try {

@@ -190,7 +190,7 @@ export class PermissionClassifier {
       auto_deny_critical: true,
       enable_ai_delegation: true,
       learn_from_history: true,
-      history_file: config.history_file || './.appmaker/permission-history.jsonl',
+      history_file: config.history_file || './.ncf/permission-history.jsonl',
       ...config,
     };
 

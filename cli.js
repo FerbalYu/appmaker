@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * appMaker CLI
+ * NexusCodeForge (NCF) CLI
  * 执行双 Agent 协作流程（集成持久守护进程）
  *
  * 用法:
@@ -18,6 +18,7 @@ import { Supervisor } from './src/supervisor.js';
 import { ProgressMonitor } from './src/monitor/index.js';
 import { createDaemon, DAEMON_STATE } from './src/daemon/index.js';
 import { MultiAgentThinker } from './src/thinker.js';
+import { AssetScoutAdapter } from './src/agents/asset-scout.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -63,7 +64,7 @@ if (daemonIndex !== -1) {
 
 const mockIndex = args.findIndex((arg) => arg === '--mock' || arg === '--dry-run');
 if (mockIndex !== -1) {
-  process.env.APPMAKER_MOCK = '1';
+  process.env.NCF_MOCK = '1';
   console.log(
     '\x1b[33m🚀 警告: 已启用 MOCK/DRY-RUN 模式，所有写操作和命令执行将被沙箱模拟。\x1b[0m',
   );
@@ -71,9 +72,12 @@ if (mockIndex !== -1) {
 }
 
 const mainDir = path.resolve(__dirname);
-if (executeDir === mainDir || executeDir.startsWith(mainDir + path.sep)) {
-  console.error('\x1b[31m错误: 禁止在主程序文件夹下工作！\x1b[0m');
-  console.error(`请使用 --dir 参数指定工作目录，例如:`);
+const safeExecDir = executeDir.toLowerCase();
+const safeMainDir = mainDir.toLowerCase();
+
+if (safeExecDir === safeMainDir || safeExecDir.startsWith(safeMainDir + path.sep)) {
+  console.error('\\x1b[31m错误: 禁止在主程序文件夹下工作！\\x1b[0m');
+  console.error(`请使用 --dir 参数指定另一工作目录，例如:`);
   console.error(`  bun cli.js run "需求描述" --dir ./my-project`);
   console.error(`  bun cli.js run "需求描述" --dir D:\\projects\\my-app`);
   process.exit(1);
@@ -98,7 +102,7 @@ let globalDaemon = null;
 async function main() {
   try {
     console.log('='.repeat(50));
-    console.log('appMaker - AI 驱动的 APP 开发系统');
+    console.log('NexusCodeForge (NCF) - AI 驱动的跨界开发引擎');
     console.log('工作目录: ' + executeDir);
     console.log('='.repeat(50));
     console.log();
@@ -184,7 +188,7 @@ async function main() {
 
       case 'version':
       case 'v':
-        console.log('appMaker v2.0.0');
+        console.log('NexusCodeForge v2.0.0');
         break;
 
       default:
@@ -308,7 +312,7 @@ async function cmdPlan(requirement) {
     const plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
-    const plansDir = path.join(executeDir, '.appmaker', 'plans');
+    const plansDir = path.join(executeDir, '.ncf', 'plans');
     await planner.savePlan(plan, filename, plansDir);
 
     console.log('\n生成的计划:');
@@ -365,7 +369,7 @@ async function cmdExecute(input) {
       plan = await planner.plan(input);
 
       const filename = `plan_${Date.now()}.json`;
-      const plansDir = path.join(executeDir, '.appmaker', 'plans');
+      const plansDir = path.join(executeDir, '.ncf', 'plans');
       await planner.savePlan(plan, filename, plansDir);
     } catch (error) {
       console.error('\x1b[31mFailed to generate plan:\x1b[0m', error.message);
@@ -392,7 +396,9 @@ async function cmdRun(requirement) {
   await startMonitor();
 
   console.log('='.repeat(50));
-  console.log('步骤 1: 生成执行计划');
+  console.log('='.repeat(50));
+
+  console.log('步骤 1: 依据需求生成严格执行计划 (Planner)');
   console.log('='.repeat(50));
   console.log();
 
@@ -402,7 +408,7 @@ async function cmdRun(requirement) {
     plan = await planner.plan(requirement);
 
     const filename = `plan_${Date.now()}.json`;
-    const plansDir = path.join(executeDir, '.appmaker', 'plans');
+    const plansDir = path.join(executeDir, '.ncf', 'plans');
     await planner.savePlan(plan, filename, plansDir);
     globalBus.emit('plan:ready', { plan });
 
@@ -450,14 +456,14 @@ async function cmdRun(requirement) {
 
   console.log();
   console.log('='.repeat(50));
-  console.log('步骤 2: 执行计划');
+  console.log('步骤 3: 启动引擎与并行工作流');
   console.log('='.repeat(50));
   console.log();
 
-  await executePlan(plan);
+  await executePlan(plan, requirement);
 }
 
-async function executePlan(plan) {
+async function executePlan(plan, rawContext = '') {
   try {
     await fs.access(executeDir, fs.constants.W_OK);
   } catch {
@@ -490,6 +496,65 @@ async function executePlan(plan) {
   }
 
   console.log('开始执行计划...\n');
+
+  // ============================
+  // 后台并行素材获取预判与调用 (AssetScout)
+  // ============================
+  const isGameLike = /游戏|game|打怪|射击|消除|闯关|模拟|生存/i.test((plan.project?.type || '') + ' ' + (plan.project?.description || '') + ' ' + rawContext);
+  if (isGameLike) {
+    console.log('\\x1b[36m🤖 侦测到项目包含互动/游戏元素，正在由架构师评估是否需要启动 AssetScout 寻宝...\\x1b[0m');
+    
+    let localFilesDoc = '目录下目前没有明确的美术资源文件（如 png/jpg/wav）';
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const pubPath = path.join(executeDir, 'public');
+      if (fs.existsSync(pubPath)) {
+        const files = fs.readdirSync(pubPath, { recursive: true }).filter(f => f.match(/\\.(png|jpg|jpeg|gif|webp|svg|wav|mp3|ogg)$/i));
+        if (files.length > 0) {
+          localFilesDoc = `public/ 目录下已有以下素材：\\n` + files.slice(0, 10).join(', ') + (files.length > 10 ? ' ...等' : '');
+        }
+      }
+    } catch(e) {}
+
+    const thinker = new MultiAgentThinker({ verbose: false });
+    const prompt = `【当前执行计划与已有目录状态评估】
+项目：${plan.project?.name}
+描述：${plan.project?.description || rawContext}
+当前素材：${localFilesDoc}
+
+请作为技术总监判断：该项目当前是否绝对需要派出 AssetScout 去互联网寻找并下载全新的公共美术/音频素材包？
+规则：
+1. 如果已存在素材或描述中不需要特殊的精美素材资源（用纯色块、原生UI实现即可），请回复 NO。
+2. 只有明确需要如太空飞船、RPG人物、贴图等特殊素材且当前没有时，回复 YES。
+
+请仅回复 YES 或 NO，不要有任何其他内容。`;
+
+    try {
+      const decision = await thinker._callAgent('Architect', '你只负责输出 YES 或 NO', prompt, 0.1);
+      if (decision.includes('YES')) {
+        console.log('\\x1b[35m🎨 架构师下达获取指令，正在后台并发启动 AssetScout 自动寻宝模块获取素材...\\x1b[0m');
+        const scout = new AssetScoutAdapter({ name: 'AssetScout' });
+        scout.on('action', (action) => {
+          globalBus.emit('agent:action', { agent: scout.name, ...action });
+        });
+        const scoutTask = {
+          id: `scout_${Date.now()}`,
+          description: `此项目急需符合风格的素材包：\\n${plan.project?.description || rawContext}`,
+          context: { project_root: executeDir }
+        };
+        scout.execute(scoutTask).then(res => {
+          if (res.success) console.log('\\n\\x1b[32m✅ [后台并行] 美术包寻宝圆满完成！已解压就绪。\\x1b[0m\\n');
+          else console.log('\\n\\x1b[33m⚠️ [后台并行] 素材获取未全数完成: ' + (res.errors?.[0] || '未知') + '\\x1b[0m\\n');
+        }).catch(e => console.log('\\n\\x1b[31m❌ [后台并行] 素材获取严重崩溃: ' + e.message + '\\x1b[0m\\n'));
+      } else {
+         console.log('\\x1b[32m✅ 架构师评估：当前已有素材或无需外部图片，已跳过寻宝。\\x1b[0m');
+      }
+    } catch(err) {
+      console.log('\\x1b[33m⚠️ 架构师评估失败，为安全起见跳过寻宝。\\x1b[0m');
+    }
+  }
+
   console.log('检查 Agent...\n');
   const status = await healthCheck();
   const allReady = Object.values(status).every((v) => v);
@@ -499,7 +564,6 @@ async function executePlan(plan) {
 
   const engine = createEngine({
     project_root: executeDir,
-    max_review_cycles: 3,
   });
 
   if (globalDaemon) {
@@ -538,10 +602,14 @@ async function executePlan(plan) {
   }
 
   const supervisor = new Supervisor(engine, {
-    logger: { logDir: path.join(executeDir, '.appmaker', 'logs') },
+    logger: { logDir: path.join(executeDir, '.ncf', 'logs') },
   });
 
   await startMonitor();
+
+  // 监听前端控制信令
+  globalBus.on('control:pause', () => engine && engine.pause());
+  globalBus.on('control:resume', () => engine && engine.resume());
 
   const forwardEvents = [
     'milestone:start',
@@ -553,6 +621,8 @@ async function executePlan(plan) {
     'task:progress',
     'task:retry_wait',
     'agent:action',
+    'engine:paused',
+    'engine:resumed',
   ];
   forwardEvents.forEach((e) => engine.on(e, (data) => globalBus.emit(e, data)));
 
@@ -612,8 +682,8 @@ async function executePlan(plan) {
 function showHelp() {
   console.log(`
 ╔════════════════════════════════════════════════════════════════╗
-║                    appMaker CLI v2.0.0                        ║
-║              AI 驱动的 APP 开发系统                            ║
+║                   NexusCodeForge CLI v2.0.0                    ║
+║              NCF - AI 驱动的跨界开发引擎                        ║
 ╚════════════════════════════════════════════════════════════════╝
 
 📖 用法:
@@ -675,8 +745,8 @@ async function cmdStatus() {
     }
   }
 
-  const appMakerDir = path.join(executeDir, '.appmaker');
-  const checkpointsDir = path.join(appMakerDir, 'checkpoints');
+  const ncfDir = path.join(executeDir, '.ncf');
+  const checkpointsDir = path.join(ncfDir, 'checkpoints');
 
   try {
     const checkpoints = await fs.readdir(checkpointsDir);
@@ -699,7 +769,7 @@ async function cmdStatus() {
     }
   }
 
-  const logsDir = path.join(appMakerDir, 'logs');
+  const logsDir = path.join(ncfDir, 'logs');
   if (daemonMode && globalDaemon) {
     const memory = globalDaemon.getMemory();
     if (memory) {
@@ -724,7 +794,7 @@ async function cmdStatus() {
 }
 
 async function cmdLogs(type = 'execution') {
-  const logsDir = path.join(executeDir, '.appmaker', 'logs', type);
+  const logsDir = path.join(executeDir, '.ncf', 'logs', type);
 
   try {
     const files = await fs.readdir(logsDir);
@@ -762,11 +832,11 @@ async function cmdConfig(key, value) {
   console.log('\n⚙️  配置信息:\n');
 
   const defaultConfig = {
-    max_review_cycles: 3,
+    max_review_cycles: 10,
     task_timeout: 300000,
     max_retries: 2,
     max_concurrent_tasks: 3,
-    token_budget: 100000,
+    token_budget: 50000000,
     heartbeat_interval: 30000,
   };
 

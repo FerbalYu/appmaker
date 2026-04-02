@@ -34,7 +34,7 @@ async function testMemoryStore() {
   await memory.store(
     'semantic',
     {
-      project: 'appMaker',
+      project: 'NexusCodeForge',
       version: '2.0.0',
       features: ['agent', 'daemon', 'persistence'],
     },
@@ -246,7 +246,7 @@ async function testPersistence() {
 
 export async function testDaemon() {
   console.log('='.repeat(60));
-  console.log('🧪 appMaker Daemon - 功能测试');
+  console.log('🧪 NCF Daemon - 功能测试');
   console.log('='.repeat(60));
 
   const startTime = Date.now();

@@ -1,24 +1,25 @@
 {
-  "name": "appmaker",
+  "name": "nexus-code-forge",
   "version": "2.0.0",
-  "description": "AI 驱动的 APP 开发系统",
+  "description": "NCF - AI 驱动的 APP 开发系统",
   "main": "src/agents/index.js",
   "bin": {
-    "appmaker": "cli.js"
+    "ncf": "cli.js"
   },
   "scripts": {
     "start": "bun run cli.js",
     "dev": "bun --watch cli.js",
     "test": "bun test",
     "test:cov": "bun test --coverage",
-    "build": "bun build cli.js --compile --outfile dist/appmaker",
+    "build": "bun build cli.js --compile --outfile dist/ncf",
     "lint": "bun x eslint ."
   },
   "keywords": [
     "ai",
     "agent",
     "codegen",
-    "appmaker"
+    "ncf",
+    "nexus-code-forge"
   ],
   "author": "",
   "license": "ISC",
@@ -27,7 +28,6 @@
     "eslint": "^8.57.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.87",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "jsonrepair": "^3.13.3"
   }
