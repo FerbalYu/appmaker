@@ -127,7 +127,7 @@ export class ExecutionEngine extends EventEmitter {
     this._log('INFO', `📊 执行摘要:`);
     this._log(
       'INFO',
-      `   成功: ${summary.done} | 失败: ${summary.failed} | 需人工: ${summary.needs_human}`,
+      `   成功: ${summary.done} | 失败: ${summary.failed} | 阻塞: ${summary.blocked} | 死锁: ${summary.deadlock} | 需人工: ${summary.needs_human}`,
     );
     this._log('INFO', `   Token 消耗: ${this.tokenUsage.total}`);
     this._log('INFO', `   总耗时: ${Math.round(summary.duration_ms / 1000)}s`);
@@ -135,7 +135,7 @@ export class ExecutionEngine extends EventEmitter {
 
     return {
       plan_id: plan.plan_id,
-      status: summary.failed > 0 ? 'partial' : 'success',
+      status: summary.failed > 0 || summary.needs_human > 0 ? 'partial' : 'success',
       results,
       summary,
       tokenUsage: this.tokenUsage,
@@ -171,11 +171,45 @@ export class ExecutionEngine extends EventEmitter {
       ) {
         const blocked = milestoneTasks.filter((t) => !completed.has(t.id) && !executing.has(t.id));
         if (blocked.length > 0) {
-          this._log('ERROR', `检测到死锁！${blocked.length} 个任务无法完成`);
+          let deadlockCount = 0;
+          const blockedDetails = [];
+          const failedDependencyReasons = new Map();
           for (const task of blocked) {
-            const errorResult = { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
+            const deps = task.dependencies || [];
+            const failedDeps = deps.filter((depId) => {
+              const depRes = completed.get(depId) || this.tasks.get(depId)?.result;
+              const st = depRes?.status;
+              return st && st !== 'done';
+            });
+            const hasFailedDep = failedDeps.length > 0;
+            const errorResult = hasFailedDep
+              ? { task_id: task.id, status: 'blocked', error: '依赖任务失败或未完成' }
+              : { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
+            if (errorResult.status === 'deadlock') deadlockCount++;
+            if (hasFailedDep) {
+              blockedDetails.push(`${task.id} <= [${failedDeps.join(', ')}]`);
+              for (const depId of failedDeps) {
+                const depRes = completed.get(depId) || this.tasks.get(depId)?.result;
+                const reason = depRes?.error || depRes?.result?.error || depRes?.phase || depRes?.status;
+                if (!failedDependencyReasons.has(depId)) {
+                  failedDependencyReasons.set(depId, reason || 'unknown');
+                }
+              }
+            }
             results.push(errorResult);
             completed.set(task.id, errorResult);
+          }
+          if (deadlockCount > 0) {
+            this._log('ERROR', `检测到死锁！${deadlockCount} 个任务无法完成`);
+          } else {
+            const detailText = blockedDetails.length > 0 ? ` | ${blockedDetails.join('; ')}` : '';
+            this._log('WARN', `任务阻塞：${blocked.length} 个任务因依赖失败无法继续${detailText}`);
+            if (failedDependencyReasons.size > 0) {
+              const reasonText = [...failedDependencyReasons.entries()]
+                .map(([depId, reason]) => `${depId}: ${reason}`)
+                .join('; ');
+              this._log('ERROR', `请先修复上游失败任务后重试：${reasonText}`);
+            }
           }
         }
         break;
@@ -639,6 +673,8 @@ export class ExecutionEngine extends EventEmitter {
   _isRetryableError(error) {
     const retryablePatterns = [
       'timeout',
+      'timed out',
+      'timeout after',
       'ECONNRESET',
       'ETIMEDOUT',
       'ECONNREFUSED',
@@ -779,7 +815,10 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
 
   _generateSummary(results, startTime) {
     const done = results.filter((r) => r.status === 'done').length;
-    const failed = results.filter((r) => r.status === 'failed').length;
+    const failedRaw = results.filter((r) => r.status === 'failed').length;
+    const blocked = results.filter((r) => r.status === 'blocked').length;
+    const deadlock = results.filter((r) => r.status === 'deadlock').length;
+    const failed = failedRaw + blocked + deadlock;
     const needsHuman = results.filter((r) => r.status === 'needs_human').length;
     const totalCycles = results.reduce((sum, r) => sum + (r.cycles || 0), 0);
     const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / (results.length || 1);
@@ -788,6 +827,8 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       total: results.length,
       done,
       failed,
+      blocked,
+      deadlock,
       needs_human: needsHuman,
       total_review_cycles: totalCycles,
       average_score: Math.round(avgScore),

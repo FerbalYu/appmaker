@@ -4,7 +4,7 @@
   "description": "NCF - AI 驱动的 APP 开发系统",
   "main": "src/agents/index.js",
   "bin": {
-    "ncf": "cli.js"
+    "ncf": "bin/ncf.js"
   },
   "scripts": {
     "start": "bun run cli.js",

@@ -81,3 +81,4 @@ generated/
 .appmaker/
 .playwright-mcp/
 test-scout.js
+.ncf/
