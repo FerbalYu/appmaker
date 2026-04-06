@@ -28,6 +28,9 @@ export function createExecutionGuard() {
 }
 
 export function isTerminalStopReason(reason) {
+  if (typeof reason === 'string' && reason.trim()) {
+    return true;
+  }
   return new Set(Object.values(STOP_REASON)).has(reason);
 }
 

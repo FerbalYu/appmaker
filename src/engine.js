@@ -21,6 +21,8 @@ import { ProgressLedger } from './convergence/progress-ledger.js';
 import { IssueFingerprintEngine } from './convergence/issue-fingerprint-engine.js';
 import { ReviewConvergenceController } from './convergence/review-convergence-controller.js';
 import { ExecutionPolicyEngine } from './convergence/execution-policy-engine.js';
+import { ProjectStateProbe } from './convergence/project-state-probe.js';
+import { RecoveryCoordinator } from './convergence/recovery-coordinator.js';
 import { REVIEW_ERROR_CODES } from './review/error-codes.js';
 import { ReleaseObserver } from './ops/release-observer.js';
 
@@ -57,6 +59,15 @@ export class ExecutionEngine extends EventEmitter {
         parser: true,
         fingerprint: true,
       },
+      state_probe: {
+        enabled: true,
+        strict: false,
+      },
+      recovery: {
+        enabled: true,
+        max_recoveries_per_milestone: 2,
+        enable_probe_replan: true,
+      },
       ab_test: {
         enabled: false,
         mode: 'shadow',
@@ -92,6 +103,15 @@ export class ExecutionEngine extends EventEmitter {
     this.featureFlagAudit = [];
     this.alerts = [];
     this.policyEngine = new ExecutionPolicyEngine();
+    this.stateProbe = new ProjectStateProbe(this.config.state_probe);
+    this.recoveryCoordinator = new RecoveryCoordinator(this.config.recovery);
+    this.recoveryStats = {
+      attempts: 0,
+      recovered_tasks: 0,
+      replanned_tasks: 0,
+      decisions: [],
+    };
+    this.goalInvariant = null;
     this.halt = false;
     this.aborted = false;
     this.paused = false;
@@ -144,6 +164,8 @@ export class ExecutionEngine extends EventEmitter {
       'INFO',
       `📋 总任务数: ${plan.tasks.length}`,
     );
+    this.goalInvariant = this._buildGoalInvariant(plan);
+    await this._runStateProbe(plan);
 
     const results = [];
     const startTime = Date.now();
@@ -246,6 +268,19 @@ export class ExecutionEngine extends EventEmitter {
       ) {
         const blocked = milestoneTasks.filter((t) => !completed.has(t.id) && !executing.has(t.id));
         if (blocked.length > 0) {
+          const recovered = await this._attemptRecoverBlockedTasks({
+            blocked,
+            taskGraph,
+            completed,
+            milestone,
+          });
+          if (recovered > 0) {
+            this._log(
+              'WARN',
+              `恢复协调器已解除 ${recovered} 个任务的阻塞依赖，继续执行里程碑 ${milestone.id}`,
+            );
+            continue;
+          }
           let deadlockCount = 0;
           const blockedDetails = [];
           const failedDependencyReasons = new Map();
@@ -440,8 +475,35 @@ export class ExecutionEngine extends EventEmitter {
     this.emit('task:start', { task, plan });
     this._log('INFO', `\n[${task.id}] 开始: ${task.description}`);
     const taskStartAt = Date.now();
+    if (!task.goal && this.goalInvariant?.summary) {
+      task.goal = this.goalInvariant.summary;
+    }
 
     const context = await this._buildContext(task, plan);
+    const preflight = await this.stateProbe.evaluateTaskState(task, this.projectRoot);
+    if (preflight.already_satisfied) {
+      this._log(
+        'INFO',
+        `[${task.id}] 🧭 状态探针判定任务已满足，跳过重复执行 (${preflight.required_artifacts.join(', ')})`,
+      );
+      const skipResult = {
+        task_id: task.id,
+        status: 'done',
+        verdict: 'SKIP_ALREADY_SATISFIED',
+        score: 100,
+        cycles: 0,
+        code_result: null,
+        review_result: null,
+        stop_reason: 'TASK_ALREADY_SATISFIED',
+        probe: preflight,
+        quality_metrics: {
+          critical_clearance_time: 0,
+          repeat_issue_rate: 0,
+        },
+      };
+      this.emit('task:done', { task, result: skipResult });
+      return skipResult;
+    }
     let codeResult;
     let reviewResult;
     let cycle = 0;
@@ -579,6 +641,7 @@ export class ExecutionEngine extends EventEmitter {
     let reviewScore = reviewOutcome.score;
     let reviewIssues = reviewOutcome.issues;
     let reviewComments = reviewOutcome.comments;
+    let goalDriftCriticalStreak = this._countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
     let previousIssues = reviewIssues;
     const initialCriticalCount = this._countCriticalIssues(reviewIssues);
     let criticalClearanceTime = initialCriticalCount === 0 ? 0 : null;
@@ -681,6 +744,43 @@ export class ExecutionEngine extends EventEmitter {
       }
 
       reviewOutcome = this._extractReviewOutcome(reviewResult);
+      const currentGoalDriftCriticalCount = this._countGoalDriftCriticalIssues(reviewOutcome.issues || []);
+      goalDriftCriticalStreak = currentGoalDriftCriticalCount > 0 ? goalDriftCriticalStreak + 1 : 0;
+      if (goalDriftCriticalStreak >= 2) {
+        this._log('WARN', `[${task.id}] ⚠️ 检测到连续目标偏航 CRITICAL，触发强制重规划修复`);
+        const forcedReplanResult = await this._executeForcedGoalReplan({
+          task,
+          cycle,
+          context,
+          executionConfig,
+          reviewIssues: reviewOutcome.issues || [],
+          reviewComments: reviewOutcome.comments || reviewOutcome.error || '',
+        });
+        if (forcedReplanResult) {
+          codeResult = forcedReplanResult.codeResult;
+          reviewResult = forcedReplanResult.reviewResult;
+          reviewOutcome = forcedReplanResult.reviewOutcome;
+          reviewScore = reviewOutcome.score || reviewScore;
+          reviewIssues = reviewOutcome.issues || reviewIssues;
+          reviewComments = reviewOutcome.comments || reviewComments;
+          previousIssues = reviewIssues;
+          goalDriftCriticalStreak = this._countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
+          needsFix = reviewScore < REVIEW_THRESHOLD;
+          if (!needsFix) {
+            this._log('INFO', `[${task.id}] ✅ 强制重规划后通过评审 (${reviewScore})`);
+            break;
+          }
+        } else {
+          return this._buildHumanHandoffResult(task, {
+            cycle,
+            reviewScore: reviewOutcome.score || reviewScore || 0,
+            reviewIssues: reviewOutcome.issues || reviewIssues,
+            reviewComments: reviewOutcome.comments || reviewOutcome.error || reviewComments,
+            codeResult,
+            stopReason: 'GOAL_DRIFT_STORM',
+          });
+        }
+      }
       const fileChangeEffective = this._hasEffectiveFileChange(prevCodeResult, codeResult);
       const repeatRate = useFingerprint
         ? fingerprintEngine.computeRepeatRate(previousIssues, reviewOutcome.issues || [])
@@ -836,6 +936,117 @@ export class ExecutionEngine extends EventEmitter {
     };
     this.emit('task:done', { task, result: finalResult });
     return finalResult;
+  }
+
+  _countGoalDriftCriticalIssues(issues = []) {
+    return (issues || []).filter((issue) => {
+      const severity = String(issue?.severity || '').toUpperCase();
+      if (severity !== 'CRITICAL') return false;
+      const text = `${issue?.title || ''} ${issue?.reason || ''} ${issue?.suggestion || ''}`.toLowerCase();
+      return (
+        text.includes('目标') ||
+        text.includes('goal') ||
+        text.includes('偏离') ||
+        text.includes('drift') ||
+        text.includes('偏航')
+      );
+    }).length;
+  }
+
+  async _executeForcedGoalReplan({
+    task,
+    cycle,
+    context,
+    executionConfig,
+    reviewIssues = [],
+    reviewComments = '',
+  }) {
+    const forcedPrompt = this._buildForcedGoalReplanPrompt(task, reviewIssues, reviewComments);
+    const forcedCodeResult = await this._executeWithRetry(
+      async () =>
+        this.dispatcher.dispatch({
+          id: `${task.id}_goal_replan_${cycle}`,
+          type: 'modify',
+          description: forcedPrompt,
+          subtasks: task.subtasks || [],
+          files: task.files || [],
+          context: {
+            ...context,
+            review: executionConfig.review,
+            feature_flags: executionConfig.feature_flags,
+          },
+        }),
+      {
+        maxRetries: this.config.max_retries,
+        taskId: task.id,
+        phase: 'goal-replan',
+        context,
+      },
+    );
+    if (!forcedCodeResult || forcedCodeResult.status === 'failed' || forcedCodeResult.success === false) {
+      return null;
+    }
+    await this._attachFileHashes(forcedCodeResult);
+    const forcedReviewResult = await this._executeWithRetry(
+      async () =>
+        this.dispatcher.dispatch({
+          id: `review_${task.id}_goal_replan_${cycle}`,
+          type: 'review',
+          description: `强制重规划复审: ${task.description}`,
+          subtasks: task.subtasks || [],
+          files: [
+            ...(forcedCodeResult.output?.files_created || []),
+            ...(forcedCodeResult.output?.files_modified || []),
+          ],
+          context: {
+            ...context,
+            review: executionConfig.review,
+            feature_flags: executionConfig.feature_flags,
+          },
+        }),
+      {
+        maxRetries: this.config.max_retries,
+        taskId: task.id,
+        phase: 'goal-replan-review',
+        context,
+        retryByErrorCode: executionConfig.review?.retry_by_error_code !== false,
+      },
+    );
+    const forcedReviewOutcome = this._extractReviewOutcome(forcedReviewResult);
+    return {
+      codeResult: forcedCodeResult,
+      reviewResult: forcedReviewResult,
+      reviewOutcome: forcedReviewOutcome,
+    };
+  }
+
+  _buildForcedGoalReplanPrompt(task, reviewIssues = [], reviewComments = '') {
+    const issueLines = (reviewIssues || [])
+      .slice(0, 6)
+      .map(
+        (issue, idx) =>
+          `${idx + 1}. [${issue.severity || 'UNKNOWN'}] ${issue.title || 'unknown'} - ${
+            issue.reason || issue.suggestion || 'no detail'
+          }`,
+      )
+      .join('\n');
+    const goalInvariant = this.goalInvariant?.summary || task.goal || '保持原始业务目标不变';
+    return `[FORCED_GOAL_REPLAN]
+计划可变，目的不可变。你必须先对齐目标，再调整实现路径。
+
+目标不变约束:
+${goalInvariant}
+
+最近评审指出目标偏航问题:
+${issueLines || '- 无结构化 issue，参考评审摘要'}
+
+评审摘要:
+${reviewComments || '无'}
+
+执行要求:
+1. 不得更改最终业务目标
+2. 允许重排实现步骤与文件落点
+3. 输出必须是可审查、可运行的实质修改`;
   }
 
   /**
@@ -1152,9 +1363,72 @@ export class ExecutionEngine extends EventEmitter {
     return {
       task_id: task.id,
       project_root: this.projectRoot,
+      goal_invariant: this.goalInvariant?.summary || '',
       architecture_rules: await this._loadRule('architecture'),
       quality_rules: await this._loadRule('quality'),
       checkpoint: this.checkpoints[this.checkpoints.length - 1],
+    };
+  }
+
+  async _runStateProbe(plan) {
+    if (this.config.state_probe?.enabled === false) {
+      return;
+    }
+    try {
+      const snapshot = await this.stateProbe.collectProjectState(this.projectRoot);
+      const fileCount = snapshot.files.length;
+      const dirCount = snapshot.directories.length;
+      this._log('INFO', `🧭 状态探针: 顶层目录 ${dirCount} 个, 文件 ${fileCount} 个`);
+      if (plan?.metadata) {
+        plan.metadata.state_probe = {
+          captured_at: snapshot.captured_at,
+          top_level_files: fileCount,
+          top_level_directories: dirCount,
+        };
+      }
+    } catch (error) {
+      this._log('WARN', `🧭 状态探针执行失败: ${error.message}`);
+      if (this.config.state_probe?.strict) {
+        throw error;
+      }
+    }
+  }
+
+  async _attemptRecoverBlockedTasks({ blocked, taskGraph, completed, milestone }) {
+    if (this.config.recovery?.enabled === false) {
+      return 0;
+    }
+    this.recoveryStats.attempts += 1;
+    const recovery = await this.recoveryCoordinator.attemptDependencyRecovery({
+      blockedTasks: blocked,
+      graph: taskGraph,
+      completed,
+      persistedTasks: this.tasks,
+      milestoneId: milestone?.id,
+      stateProbe: this.stateProbe,
+      projectRoot: this.projectRoot,
+      goalInvariant: this.goalInvariant,
+    });
+    if (Array.isArray(recovery.decisions) && recovery.decisions.length > 0) {
+      this.recoveryStats.decisions.push(...recovery.decisions.slice(0, 20));
+      this.recoveryStats.replanned_tasks += recovery.decisions.filter(
+        (item) => item.action === 'probe_replan',
+      ).length;
+    }
+    const recoveredCount = recovery.recovered_task_ids?.length || 0;
+    this.recoveryStats.recovered_tasks += recoveredCount;
+    return recoveredCount;
+  }
+
+  _buildGoalInvariant(plan) {
+    const project = plan?.project || {};
+    const summary = [project.name, project.description, plan?.requirement]
+      .filter((v) => typeof v === 'string' && v.trim().length > 0)
+      .join(' | ')
+      .substring(0, 240);
+    return {
+      summary: summary || '保持原始业务目标不变',
+      created_at: new Date().toISOString(),
     };
   }
 
@@ -1519,6 +1793,12 @@ ${issueLines || '- 按评审意见进行小范围补丁修复'}
       summary.feature_flag_audit_count = this.featureFlagAudit.length;
       summary.feature_flag_audit_tail = this.featureFlagAudit.slice(-5);
     }
+    summary.recovery = {
+      attempts: this.recoveryStats.attempts,
+      recovered_tasks: this.recoveryStats.recovered_tasks,
+      replanned_tasks: this.recoveryStats.replanned_tasks,
+      decisions_tail: this.recoveryStats.decisions.slice(-10),
+    };
     return summary;
   }
 

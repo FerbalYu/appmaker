@@ -29,8 +29,10 @@ import {
   executeSingleToolCall,
   parseToolCallArgs,
   prepareToolCalls,
+  TOOL_SKIP_REASONS,
 } from './runtime/tool-orchestrator.js';
 import { createTraceRecorder } from './runtime/trace.js';
+import { createDefaultStopHooks, createStopHookRunner } from './runtime/stop-hooks.js';
 
 const NATIVE_CODER_CONFIG = {
   name: 'native-coder',
@@ -165,11 +167,23 @@ export class NativeCoderAdapter extends AgentAdapter {
 
   _buildUserPrompt(task, projectContext) {
     const subtasksSection = this._buildSubtasksSection(task);
+    const goalInvariant = task.context?.goal_invariant || task.goal || '';
+    const goalSection = goalInvariant
+      ? `\n## 目标不变约束\n- 最终业务目标: ${goalInvariant}\n- 允许调整实现步骤，但禁止偏离最终目标。\n`
+      : '';
+    const replanSection =
+      task.execution_mode === 'probe_replan' && task.replan_plan
+        ? `\n## 动态重规划执行分层\n${(task.replan_plan.phases || [])
+            .map((phase, index) => `${index + 1}. ${phase.name}: ${phase.objective}`)
+            .join('\n')}\n`
+        : '';
     const { sectionsText, budgetMeta } = this._buildBudgetedContextSections(projectContext);
     projectContext.budgetMeta = budgetMeta;
     return `## 项目需求
 ${task.description}
 ${subtasksSection}
+${goalSection}
+${replanSection}
 ${sectionsText}
 
 请使用工具完成代码编写任务，直接输出 JSON 格式的 tool_calls。`;
@@ -177,6 +191,7 @@ ${sectionsText}
 
   _createExecutionRuntime() {
     const traceRecorder = createTraceRecorder();
+    const stopHooks = createDefaultStopHooks(this.config || {});
     return {
       finalContent: '代码编写完毕。',
       executedCount: 0,
@@ -190,12 +205,62 @@ ${sectionsText}
       traceRecorder,
       toolCallCounter: new Map(),
       totalToolMessageChars: 0,
+      consecutiveToolFailures: 0,
+      stepStats: {
+        total: 0,
+        withToolCalls: 0,
+        withoutToolCalls: 0,
+      },
+      toolStats: {
+        total: 0,
+        success: 0,
+        failed: 0,
+        skipped: 0,
+        skip_reasons: {},
+      },
       fileChangeHints: {
         created: new Set(),
         modified: new Set(),
       },
       guard: createExecutionGuard(),
+      runStopHooks: createStopHookRunner(stopHooks),
     };
+  }
+
+  _incrementSkipReason(runtime, reason, count = 1) {
+    if (!reason) return;
+    runtime.toolStats.skip_reasons[reason] = (runtime.toolStats.skip_reasons[reason] || 0) + count;
+  }
+
+  async _runStopHooks(runtime, payload = {}) {
+    if (!runtime.runStopHooks) return false;
+    const hookResult = await runtime.runStopHooks({ runtime, ...payload });
+    if (!hookResult?.stop) return false;
+    this._requestStop(runtime, {
+      reason: hookResult.reason || STOP_REASON.COMPLETED,
+      content: hookResult.content || runtime.finalContent,
+      stage: hookResult.stage || 'hook',
+      note: hookResult.note || 'stopped by hook',
+      expectedGeneration: payload.expectedGeneration ?? null,
+    });
+    if (hookResult.trace) {
+      this._traceToolExecution(runtime.executionTrace, hookResult.trace);
+    } else {
+      this._traceToolExecution(runtime.executionTrace, {
+        step: payload.step ?? -1,
+        tool: '__stop_hook__',
+        tool_call_id: null,
+        args_summary: JSON.stringify({
+          reason: hookResult.reason || 'hook_stop',
+        }),
+        success: false,
+        duration_ms: 0,
+        api_round_trip_ms: payload.apiRoundTripMs || 0,
+        tool_error_code: 'HOOK_STOP',
+        error: hookResult.note || hookResult.reason || 'Hook requested stop',
+      });
+    }
+    return true;
   }
 
   _normalizeWorkspaceRelativePath(projectRoot, filePath) {
@@ -445,6 +510,7 @@ ${sectionsText}
       const externalSignal = task.context?.abortController?.signal || task.context?.abortSignal;
 
       for (let step = 0; step < MAX_STEPS; step++) {
+        runtime.stepStats.total += 1;
         const stepGeneration = runtime.guard.generation;
         if (externalSignal?.aborted) {
           this._requestStop(runtime, {
@@ -538,8 +604,10 @@ ${sectionsText}
         messages.push(message);
 
         const nativeToolCalls = message.tool_calls || [];
+        runtime.toolStats.total += nativeToolCalls.length;
 
         if (nativeToolCalls.length === 0) {
+          runtime.stepStats.withoutToolCalls += 1;
           this._requestStop(runtime, {
             reason: STOP_REASON.NO_TOOL_CALLS,
             content: message.content || runtime.finalContent,
@@ -556,11 +624,12 @@ ${sectionsText}
           }
           break; // 跳出大循环
         }
+        runtime.stepStats.withToolCalls += 1;
 
         let shouldStopLoop = false;
         if (nativeToolCalls.length > 0 && projectRoot) {
           runtime.executedCount += nativeToolCalls.length;
-          const { preparedCalls, shouldStop } = prepareToolCalls({
+          const { preparedCalls, shouldStop, skipped, skipReasons } = prepareToolCalls({
             nativeToolCalls,
             maxToolCallsPerStep: MAX_TOOL_CALLS_PER_STEP,
             maxSameToolCall: MAX_SAME_TOOL_CALL,
@@ -633,6 +702,13 @@ ${sectionsText}
             },
           });
 
+          if (skipped > 0) {
+            runtime.toolStats.skipped += skipped;
+            for (const [reason, count] of Object.entries(skipReasons || {})) {
+              this._incrementSkipReason(runtime, reason, count);
+            }
+          }
+
           if (shouldStop || shouldStopLoop) {
             break;
           }
@@ -657,6 +733,13 @@ ${sectionsText}
               }),
             onCallSettled: async (call, singleRun, mode) => {
               runtime.toolErrorsTotal += singleRun.toolErrorsDelta;
+              if (singleRun.toolResultObj?.success === false) {
+                runtime.toolStats.failed += 1;
+                runtime.consecutiveToolFailures += 1;
+              } else {
+                runtime.toolStats.success += 1;
+                runtime.consecutiveToolFailures = 0;
+              }
               this._recordFileChangeHint(
                 runtime,
                 call.tool,
@@ -684,7 +767,50 @@ ${sectionsText}
                 shouldStopLoop = true;
                 return true;
               }
+              const hookStopped = await this._runStopHooks(runtime, {
+                step,
+                apiRoundTripMs,
+                expectedGeneration: stepGeneration,
+              });
+              if (hookStopped) {
+                shouldStopLoop = true;
+                return true;
+              }
               return false;
+            },
+            onCallSkipped: async (call, reason, info = {}) => {
+              runtime.toolStats.skipped += 1;
+              this._incrementSkipReason(runtime, reason || TOOL_SKIP_REASONS.STOP_REQUESTED, 1);
+              const skippedContent = {
+                success: false,
+                skipped: true,
+                reason: reason || TOOL_SKIP_REASONS.STOP_REQUESTED,
+                error: info?.error || 'Tool call skipped',
+              };
+              this._traceToolExecution(runtime.executionTrace, {
+                step,
+                tool: call.tool,
+                tool_call_id: call.toolCall.id,
+                args_summary: this._summarizeArgs(call.args),
+                success: false,
+                duration_ms: 0,
+                api_round_trip_ms: apiRoundTripMs,
+                tool_error_code: 'TOOL_SKIPPED',
+                error: skippedContent.error,
+              });
+              messages.push({
+                role: 'tool',
+                tool_call_id: call.toolCall.id,
+                content: JSON.stringify(skippedContent),
+              });
+            },
+            shouldCascadeCancel: (_call, singleRun) => {
+              if (!singleRun?.toolResultObj || singleRun.toolResultObj.success !== false) {
+                return false;
+              }
+              const code = singleRun.trace?.tool_error_code || '';
+              if (code === 'NEEDS_CONFIRMATION') return false;
+              return Boolean(singleRun.toolResultObj?.critical || singleRun.toolResultObj?.cascade_cancel);
             },
             isStopRequested: () => shouldStopLoop,
           });
@@ -725,6 +851,12 @@ ${sectionsText}
           files_created: filesCreated,
           files_modified: filesModified,
           tool_calls_executed: runtime.executedCount,
+          tool_calls_total: runtime.toolStats.total,
+          tool_calls_success: runtime.toolStats.success,
+          tool_calls_failed: runtime.toolStats.failed,
+          tool_calls_skipped: runtime.toolStats.skipped,
+          skip_reasons: runtime.toolStats.skip_reasons,
+          steps_total: runtime.stepStats.total,
           stop_reason: runtime.stopReason,
           execution_trace: runtime.executionTrace,
           tokens_used: runtime.totalTokens,
@@ -790,6 +922,12 @@ ${sectionsText}
         tests_run: false,
         summary: rawResult.summary || '',
         tool_calls_executed: rawResult.tool_calls_executed || 0,
+        tool_calls_total: rawResult.tool_calls_total || 0,
+        tool_calls_success: rawResult.tool_calls_success || 0,
+        tool_calls_failed: rawResult.tool_calls_failed || 0,
+        tool_calls_skipped: rawResult.tool_calls_skipped || 0,
+        skip_reasons: rawResult.skip_reasons || {},
+        steps_total: rawResult.steps_total || 0,
         stop_reason: rawResult.stop_reason || STOP_REASON.COMPLETED,
         execution_trace: rawResult.execution_trace || [],
         trace_summary: this._buildTraceSummary(rawResult.execution_trace || []),
@@ -807,9 +945,12 @@ ${sectionsText}
     let toolErrorCount = 0;
     let parallelBatchCount = 0;
     let serialBatchCount = 0;
+    let skippedEvents = 0;
 
     for (const trace of traces) {
-      if (trace?.tool_error_code) {
+      if (trace?.tool_error_code === 'TOOL_SKIPPED') {
+        skippedEvents++;
+      } else if (trace?.tool_error_code) {
         toolErrorCount++;
       }
       if (trace?.batch_mode === 'parallel') {
@@ -822,6 +963,7 @@ ${sectionsText}
     return {
       total_events: traces.length,
       tool_errors: toolErrorCount,
+      skipped_events: skippedEvents,
       parallel_events: parallelBatchCount,
       serial_events: serialBatchCount,
     };

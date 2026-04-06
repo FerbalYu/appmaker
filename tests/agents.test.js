@@ -176,6 +176,7 @@ describe('Agents & Dispatcher', () => {
     expect(result.output.trace_summary).toEqual({
       total_events: 3,
       tool_errors: 1,
+      skipped_events: 0,
       parallel_events: 1,
       serial_events: 1,
     });
@@ -495,6 +496,50 @@ describe('Agents & Dispatcher', () => {
     expect(result.status).toBe('success');
     expect(result.output.stop_reason).toBe('no_tool_calls');
     expect(maxActive).toBeGreaterThan(1);
+  });
+
+  it('should expose tool counters and skip reasons in coder output', async () => {
+    const coder = new NativeCoderAdapter({ api_key: 'test-key' });
+    coder._getProjectContext = async () => ({ files: [], structure: '', techStack: '' });
+    coder._getNativeToolsSchema = () => [];
+    coder._detectFileChanges = async () => ({ created: [], modified: [] });
+
+    coder._requestCompletion = async () => ({
+      ok: true,
+      json: async () => ({
+        usage: { total_tokens: 1 },
+        choices: [
+          {
+            message: {
+              content: 'invalid args and repeated calls',
+              tool_calls: [
+                { id: 'tc_bad', type: 'function', function: { name: 'read_file', arguments: '{"file_path":' } },
+                { id: 'tc_rep_1', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+                { id: 'tc_rep_2', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+                { id: 'tc_rep_3', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+                { id: 'tc_rep_4', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+
+    coder.executeTool = async () => ({ success: true, result: { content: '' } });
+
+    const result = await coder.execute({
+      id: 'task-counters',
+      description: 'count stats',
+      context: { project_root: '.' },
+    });
+
+    expect(result.output.stop_reason).toBe('repeated_tool_call');
+    expect(result.output.tool_calls_total).toBe(5);
+    expect(result.output.tool_calls_success).toBe(0);
+    expect(result.output.tool_calls_failed).toBe(0);
+    expect(result.output.tool_calls_skipped).toBeGreaterThanOrEqual(1);
+    expect(result.output.skip_reasons.repeated_call).toBe(1);
+    expect(result.output.steps_total).toBeGreaterThanOrEqual(1);
   });
 
   it('should record retry metrics when dispatcher retries and succeeds', async () => {

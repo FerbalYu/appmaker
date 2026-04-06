@@ -32,29 +32,25 @@ export function createDispatcher(overrideConfig = {}) {
   };
   const dispatcher = new AgentDispatcher(finalConfig);
 
-  dispatcher.registerAgent(
-    'native-coder',
+  dispatcher.registerAgent('native-coder', () =>
     new NativeCoderAdapter({
       ...config.agents?.['native-coder'],
       ...overrideConfig,
     }),
   );
-  dispatcher.registerAgent(
-    'native-reviewer',
+  dispatcher.registerAgent('native-reviewer', () =>
     new NativeReviewerAdapter({
       ...config.agents?.['native-reviewer'],
       ...overrideConfig,
     }),
   );
-  dispatcher.registerAgent(
-    'asset-scout',
+  dispatcher.registerAgent('asset-scout', () =>
     new AssetScoutAdapter({
       ...config.agents?.['asset-scout'],
       ...overrideConfig,
     }),
   );
-  dispatcher.registerAgent(
-    'rainmaker',
+  dispatcher.registerAgent('rainmaker', () =>
     new RainmakerAdapter({
       ...config.agents?.rainmaker,
       ...overrideConfig,

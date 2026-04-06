@@ -7,6 +7,14 @@ export const CONCURRENCY_SAFE_TOOLS = new Set([
   'git_diff',
 ]);
 
+export const TOOL_SKIP_REASONS = {
+  INVALID_ARGS: 'invalid_args',
+  TOOL_CALLS_LIMIT: 'tool_calls_limit',
+  REPEATED_CALL: 'repeated_call',
+  STOP_REQUESTED: 'stop_requested',
+  CASCADE_CANCELLED: 'cascade_cancelled',
+};
+
 export function isConcurrencySafeTool(toolName) {
   return CONCURRENCY_SAFE_TOOLS.has(toolName);
 }
@@ -30,21 +38,103 @@ export async function executeBatchedToolCalls({
   executeSingleCall,
   onCallSettled,
   isStopRequested,
+  onCallSkipped,
+  shouldCascadeCancel,
 }) {
+  let cascadeCancelled = false;
   const batches = partitionToolCallsForExecution(preparedCalls);
   for (const batch of batches) {
+    if (cascadeCancelled) {
+      for (const call of batch.calls) {
+        if (onCallSkipped) {
+          await onCallSkipped(call, TOOL_SKIP_REASONS.CASCADE_CANCELLED, {
+            error: 'Skipped because a previous tool call triggered cascade cancellation',
+          });
+        }
+      }
+      continue;
+    }
+
+    if (isStopRequested && isStopRequested()) {
+      for (const call of batch.calls) {
+        if (onCallSkipped) {
+          await onCallSkipped(call, TOOL_SKIP_REASONS.STOP_REQUESTED, {
+            error: 'Skipped because stop was already requested',
+          });
+        }
+      }
+      return;
+    }
+
     if (batch.isConcurrencySafe) {
-      const settled = await Promise.all(batch.calls.map((call) => executeSingleCall(call)));
+      const settled = await Promise.all(
+        batch.calls.map(async (call) => {
+          if (isStopRequested && isStopRequested()) {
+            return {
+              skipped: true,
+              skipReason: TOOL_SKIP_REASONS.STOP_REQUESTED,
+              toolResultObj: {
+                success: false,
+                error: 'Skipped because stop was requested while dispatching concurrent tools',
+              },
+            };
+          }
+          return executeSingleCall(call);
+        }),
+      );
       for (let i = 0; i < batch.calls.length; i++) {
-        const stop = await onCallSettled(batch.calls[i], settled[i], 'parallel');
+        const call = batch.calls[i];
+        const singleRun = settled[i];
+        if (singleRun?.skipped) {
+          if (onCallSkipped) {
+            await onCallSkipped(call, singleRun.skipReason || TOOL_SKIP_REASONS.STOP_REQUESTED, {
+              error: singleRun?.toolResultObj?.error || 'Skipped',
+            });
+          }
+          continue;
+        }
+
+        const stop = await onCallSettled(call, singleRun, 'parallel');
+        if (shouldCascadeCancel && shouldCascadeCancel(call, singleRun, 'parallel')) {
+          cascadeCancelled = true;
+        }
         if (stop || (isStopRequested && isStopRequested())) return;
       }
       continue;
     }
 
     for (const call of batch.calls) {
+      if (cascadeCancelled) {
+        if (onCallSkipped) {
+          await onCallSkipped(call, TOOL_SKIP_REASONS.CASCADE_CANCELLED, {
+            error: 'Skipped because a previous tool call triggered cascade cancellation',
+          });
+        }
+        continue;
+      }
+      if (isStopRequested && isStopRequested()) {
+        if (onCallSkipped) {
+          await onCallSkipped(call, TOOL_SKIP_REASONS.STOP_REQUESTED, {
+            error: 'Skipped because stop was requested',
+          });
+        }
+        return;
+      }
       const singleRun = await executeSingleCall(call);
+      if (singleRun?.skipped) {
+        if (onCallSkipped) {
+          await onCallSkipped(
+            call,
+            singleRun.skipReason || TOOL_SKIP_REASONS.STOP_REQUESTED,
+            singleRun.toolResultObj,
+          );
+        }
+        continue;
+      }
       const stop = await onCallSettled(call, singleRun, 'serial');
+      if (shouldCascadeCancel && shouldCascadeCancel(call, singleRun, 'serial')) {
+        cascadeCancelled = true;
+      }
       if (stop || (isStopRequested && isStopRequested())) return;
     }
   }
@@ -159,15 +249,25 @@ export function prepareToolCalls({
 }) {
   if (nativeToolCalls.length > maxToolCallsPerStep) {
     if (onLimitExceeded) onLimitExceeded(nativeToolCalls.length);
-    return { preparedCalls: [], shouldStop: true };
+    return {
+      preparedCalls: [],
+      shouldStop: true,
+      skipped: nativeToolCalls.length,
+      skipReasons: { [TOOL_SKIP_REASONS.TOOL_CALLS_LIMIT]: nativeToolCalls.length },
+    };
   }
 
   const preparedCalls = [];
+  const skipReasons = {};
+  let skipped = 0;
   for (const toolCall of nativeToolCalls) {
     const tool = toolCall.function.name;
     const parsedArgs = parseArgs(toolCall);
     if (!parsedArgs.ok) {
       if (onInvalidArgs) onInvalidArgs(toolCall, parsedArgs);
+      skipped += 1;
+      skipReasons[TOOL_SKIP_REASONS.INVALID_ARGS] =
+        (skipReasons[TOOL_SKIP_REASONS.INVALID_ARGS] || 0) + 1;
       continue;
     }
 
@@ -175,11 +275,14 @@ export function prepareToolCalls({
     const repeatedCount = recordToolCall(tool, args);
     if (repeatedCount > maxSameToolCall) {
       if (onRepeatedCall) onRepeatedCall(toolCall, tool, args);
-      return { preparedCalls, shouldStop: true };
+      skipped += 1;
+      skipReasons[TOOL_SKIP_REASONS.REPEATED_CALL] =
+        (skipReasons[TOOL_SKIP_REASONS.REPEATED_CALL] || 0) + 1;
+      return { preparedCalls, shouldStop: true, skipped, skipReasons };
     }
 
     preparedCalls.push({ toolCall, tool, args });
   }
 
-  return { preparedCalls, shouldStop: false };
+  return { preparedCalls, shouldStop: false, skipped, skipReasons };
 }

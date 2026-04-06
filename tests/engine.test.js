@@ -29,7 +29,11 @@ describe('ExecutionEngine', () => {
   });
 
   it('should include blocked/deadlock in summary and log details', async () => {
-    const engine = new ExecutionEngine({ project_root: process.cwd(), max_concurrent_tasks: 1 });
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      max_concurrent_tasks: 1,
+      recovery: { enabled: false },
+    });
     // Mock dispatcher to force one task fail and another depend on it
     engine.dispatcher.registerAgent('native-coder', () => ({
       name: 'native-coder',
@@ -451,5 +455,210 @@ describe('ExecutionEngine', () => {
     const reportContent = readFileSync(result.summary.final_evaluation_report, 'utf-8');
     expect(reportContent).toContain('告警分类分布');
     expect(reportContent).toContain('告警规则分布');
+  });
+
+  it('should skip task execution when state probe determines artifacts are already satisfied', async () => {
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      state_probe: { enabled: true },
+      max_concurrent_tasks: 1,
+    });
+    engine.stateProbe.evaluateTaskState = async () => ({
+      already_satisfied: true,
+      required_artifacts: ['README.md'],
+      missing_artifacts: [],
+    });
+    const plan = {
+      plan_id: 'state_probe_skip',
+      project: { name: 'State Probe Skip' },
+      tasks: [{ id: 't1', description: '初始化项目结构', type: 'create', dependencies: [] }],
+      milestones: [{ id: 'm1', name: 'm1', tasks: ['t1'] }],
+    };
+    const result = await engine.execute(plan);
+    expect(result.results[0].status).toBe('done');
+    expect(result.results[0].stop_reason).toBe('TASK_ALREADY_SATISFIED');
+  });
+
+  it('should recover blocked tasks by waiving failed dependency when artifacts already exist', async () => {
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      recovery: { enabled: true, max_recoveries_per_milestone: 2 },
+      state_probe: { enabled: false },
+      max_concurrent_tasks: 1,
+    });
+    engine.dispatcher.registerAgent('native-coder', () => ({
+      name: 'native-coder',
+      execute: async (task) => {
+        if (task.id === 'a') {
+          return { success: false, error: 'forced fail', status: 'failed' };
+        }
+        return {
+          task_id: task.id,
+          success: true,
+          status: 'success',
+          output: { files_created: [], files_modified: [] },
+        };
+      },
+      setPermissionClassifier: () => {},
+    }));
+    engine.dispatcher.registerAgent('native-reviewer', () => ({
+      name: 'native-reviewer',
+      execute: async () => ({
+        success: true,
+        status: 'success',
+        output: { score: 100, issues: [], summary: 'OK' },
+      }),
+      setPermissionClassifier: () => {},
+    }));
+    engine.stateProbe.evaluateTaskState = async (task) => ({
+      already_satisfied: task.id === 'b',
+      required_artifacts: task.id === 'b' ? ['README.md'] : ['__missing__.txt'],
+      missing_artifacts: task.id === 'b' ? [] : ['__missing__.txt'],
+    });
+    const plan = {
+      plan_id: 'recover_blocked',
+      project: { name: 'Recover Blocked' },
+      tasks: [
+        { id: 'a', description: 'upstream fail', type: 'create', dependencies: [] },
+        { id: 'b', description: 'downstream blocked', type: 'create', dependencies: ['a'] },
+      ],
+      milestones: [{ id: 'm1', name: 'm1', tasks: ['a', 'b'] }],
+    };
+    const result = await engine.execute(plan);
+    expect(result.summary.recovery.recovered_tasks).toBeGreaterThanOrEqual(1);
+    expect(result.summary.blocked).toBe(0);
+  });
+
+  it('should perform probe-driven replan while keeping goal invariant', async () => {
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      recovery: { enabled: true, enable_probe_replan: true, max_recoveries_per_milestone: 2 },
+      state_probe: { enabled: false },
+      max_concurrent_tasks: 1,
+    });
+    engine.dispatcher.registerAgent('native-coder', () => ({
+      name: 'native-coder',
+      execute: async (task) => {
+        if (task.id === 'a') {
+          return { success: false, error: 'forced fail', status: 'failed' };
+        }
+        return {
+          task_id: task.id,
+          success: true,
+          status: 'success',
+          output: { files_created: [], files_modified: [] },
+        };
+      },
+      setPermissionClassifier: () => {},
+    }));
+    engine.dispatcher.registerAgent('native-reviewer', () => ({
+      name: 'native-reviewer',
+      execute: async () => ({
+        success: true,
+        status: 'success',
+        output: { score: 100, issues: [], summary: 'OK' },
+      }),
+      setPermissionClassifier: () => {},
+    }));
+    engine.stateProbe.evaluateTaskState = async (task) => ({
+      already_satisfied: false,
+      required_artifacts: ['requirements.txt'],
+      missing_artifacts: ['requirements.txt'],
+      reason: task.id === 'b' ? 'missing_required_artifacts' : 'not_satisfied',
+    });
+    const plan = {
+      plan_id: 'probe_replan',
+      requirement: '完成 Python 工程基础配置',
+      project: { name: 'Probe Replan', description: '保持目标一致' },
+      tasks: [
+        { id: 'a', description: 'upstream fail', type: 'create', dependencies: [] },
+        { id: 'b', description: 'prepare deps', type: 'create', dependencies: ['a'] },
+      ],
+      milestones: [{ id: 'm1', name: 'm1', tasks: ['a', 'b'] }],
+    };
+    const result = await engine.execute(plan);
+    expect(result.summary.recovery.replanned_tasks).toBeGreaterThanOrEqual(1);
+    const replanDecision = (result.summary.recovery.decisions_tail || []).find(
+      (d) => d.action === 'probe_replan',
+    );
+    expect(replanDecision).toBeDefined();
+    expect(replanDecision.goal).toContain('Probe Replan');
+    expect(replanDecision.replan_plan?.strategy).toBe('probe_driven_replan');
+    expect(Array.isArray(replanDecision.replan_plan?.phases)).toBe(true);
+    const taskB = plan.tasks.find((t) => t.id === 'b');
+    expect(taskB.execution_mode).toBe('probe_replan');
+  });
+
+  it('should expose goal invariant in task execution context', async () => {
+    const engine = new ExecutionEngine({ project_root: process.cwd() });
+    engine.goalInvariant = { summary: '目标A: 保持认证能力稳定' };
+    const context = await engine._buildContext({ id: 't_ctx' }, { project: { name: 'p' } });
+    expect(context.goal_invariant).toContain('目标A');
+  });
+
+  it('should trigger forced goal replan after consecutive goal-drift critical issues', async () => {
+    const descriptions = [];
+    let reviewCall = 0;
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      max_concurrent_tasks: 1,
+      max_review_cycles: 3,
+      state_probe: { enabled: false },
+    });
+    engine.dispatcher.registerAgent('native-coder', () => ({
+      name: 'native-coder',
+      execute: async (task) => {
+        descriptions.push(task.description || '');
+        return {
+          task_id: task.id,
+          success: true,
+          status: 'success',
+          output: { files_created: ['main.py'], files_modified: [] },
+        };
+      },
+      setPermissionClassifier: () => {},
+    }));
+    engine.dispatcher.registerAgent('native-reviewer', () => ({
+      name: 'native-reviewer',
+      execute: async () => {
+        reviewCall += 1;
+        if (reviewCall <= 2) {
+          return {
+            task_id: `review_${reviewCall}`,
+            success: true,
+            status: 'success',
+            output: {
+              score: 55,
+              issues: [
+                {
+                  severity: 'CRITICAL',
+                  title: '目标偏离',
+                  reason: '实现路径已经偏离目标',
+                  suggestion: '回到目标约束',
+                },
+              ],
+              summary: '存在目标偏离',
+            },
+          };
+        }
+        return {
+          task_id: `review_${reviewCall}`,
+          success: true,
+          status: 'success',
+          output: { score: 100, issues: [], summary: '目标对齐完成' },
+        };
+      },
+      setPermissionClassifier: () => {},
+    }));
+    const plan = {
+      plan_id: 'forced_goal_replan',
+      requirement: '保持登录目标不变',
+      project: { name: 'Goal Replan', description: '验证目标不变熔断' },
+      tasks: [{ id: 't1', description: '实现登录流程', type: 'create', dependencies: [] }],
+      milestones: [{ id: 'm1', name: 'm1', tasks: ['t1'] }],
+    };
+    const result = await engine.execute(plan);
+    expect(result.results[0].status).toBe('done');
+    expect(descriptions.some((d) => d.includes('[FORCED_GOAL_REPLAN]'))).toBe(true);
   });
 });

@@ -303,6 +303,7 @@ ${toolsDescription}
 - 至少找到 3 个问题（除非代码确实完美）
 - CRITICAL 必须包含具体代码行号或位置
 - 不要遗漏任何潜在的 bug 或安全问题
+- 若实现路径偏离“目标不变约束”（例如只改步骤却改变业务目标），必须判定为 CRITICAL 并显著扣分
 - 仔细对照用户提供的"子任务列表"，检查代码是否完成了所有明确要求的子任务。如果漏掉任何一个明确的子任务，请严重扣分（score < 70）并明确指出由于未完成XX任务导致不合格！
 - 如果待审查文件或代码内容为空，且该任务明显需要产出（如编写/修改代码或文档），你必须给出极低分（例如 20 分）并判定为 Failed！
 - 如果没有问题且确实有实质产出，且全额覆盖了子任务，score 设为 100，issues 设为空数组
@@ -312,10 +313,14 @@ ${toolsDescription}
         task.subtasks && task.subtasks.length > 0
           ? `\n## 需要验证的子任务列表\n${task.subtasks.map((st, i) => `${i + 1}. ${st}`).join('\n')}\n`
           : '';
+      const goalInvariantSection = task.context?.goal_invariant
+        ? `## 目标不变约束\n${task.context.goal_invariant}\n`
+        : '';
 
       const userPrompt = `## 项目需求
 ${task.description}
 ${subtasksSection}
+${goalInvariantSection}
 ${task.context?.architecture_rules ? `## 架构规范\n${task.context.architecture_rules.substring(0, 800)}\n` : ''}
 ${task.context?.quality_rules ? `## 质量规范\n${task.context.quality_rules.substring(0, 800)}\n` : ''}
 
