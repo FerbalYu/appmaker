@@ -14,6 +14,41 @@
     "default_agent": "native-coder"
   },
   "engine": {
-    "max_review_cycles": 0
+    "max_review_cycles": 0,
+    "ab_test": {
+      "enabled": false,
+      "mode": "shadow"
+    },
+    "convergence": {
+      "window_size": 3,
+      "min_score_delta": 3,
+      "max_repeat_issue_rate": 0.7,
+      "max_parse_failures": 2,
+      "handoff_enabled": true
+    },
+    "feature_flags": {
+      "controller": true,
+      "gate": true,
+      "parser": true,
+      "fingerprint": true
+    },
+    "observability": {
+      "structured_json_logs": true,
+      "alerts": {
+        "long_run_ms": 3600000,
+        "retry_burst": 2,
+        "parse_failure_storm": 1
+      }
+    },
+    "release": {
+      "enabled": false,
+      "observation_window_days": 7,
+      "auto_generate_report": true
+    }
+  },
+  "review": {
+    "input_gate_enabled": true,
+    "parser_fallback_enabled": true,
+    "retry_by_error_code": true
   }
 }

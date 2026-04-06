@@ -13,9 +13,16 @@ import { AgentDispatcher } from './agents/dispatcher.js';
 import { NativeCoderAdapter } from './agents/native-coder.js';
 import { NativeReviewerAdapter } from './agents/native-reviewer.js';
 import { promises as fs } from 'fs';
+import { createHash } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
+import { ProgressLedger } from './convergence/progress-ledger.js';
+import { IssueFingerprintEngine } from './convergence/issue-fingerprint-engine.js';
+import { ReviewConvergenceController } from './convergence/review-convergence-controller.js';
+import { ExecutionPolicyEngine } from './convergence/execution-policy-engine.js';
+import { REVIEW_ERROR_CODES } from './review/error-codes.js';
+import { ReleaseObserver } from './ops/release-observer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +37,43 @@ export class ExecutionEngine extends EventEmitter {
       idle_timeout_ms: 1800000,
       enable_idle_abort: false,
       heartbeat_check_interval_ms: 10000,
+      convergence: {
+        window_size: 3,
+        min_score_delta: 3,
+        max_repeat_issue_rate: 0.7,
+        max_parse_failures: 2,
+        diminishing_streak_required: 2,
+        soft_stop_enabled: true,
+        handoff_enabled: true,
+      },
+      review: {
+        input_gate_enabled: true,
+        parser_fallback_enabled: true,
+        retry_by_error_code: true,
+      },
+      feature_flags: {
+        controller: true,
+        gate: true,
+        parser: true,
+        fingerprint: true,
+      },
+      ab_test: {
+        enabled: false,
+        mode: 'shadow',
+      },
+      observability: {
+        structured_json_logs: true,
+        alerts: {
+          long_run_ms: 60 * 60 * 1000,
+          retry_burst: 2,
+          parse_failure_storm: 1,
+        },
+      },
+      release: {
+        enabled: false,
+        observation_window_days: 7,
+        auto_generate_report: true,
+      },
       ...config,
     };
 
@@ -38,11 +82,22 @@ export class ExecutionEngine extends EventEmitter {
     this.logs = [];
     this.maxReviewCycles = this.config.max_review_cycles;
     this.tokenUsage = { total: 0, byAgent: {} };
+    this.abStats = {
+      enabled: this.config.ab_test?.enabled === true,
+      mode: this.config.ab_test?.mode || 'shadow',
+      total_compares: 0,
+      divergence_count: 0,
+      samples: [],
+    };
+    this.featureFlagAudit = [];
+    this.alerts = [];
+    this.policyEngine = new ExecutionPolicyEngine();
     this.halt = false;
     this.aborted = false;
     this.paused = false;
 
     this.projectRoot = this.config.project_root || process.cwd();
+    this.releaseObserver = new ReleaseObserver(this.projectRoot, this.config.release);
 
     this.dispatcher = new AgentDispatcher({
       native_reviewer_model: config.native_reviewer_model || 'MiniMax-Text-01',
@@ -58,6 +113,8 @@ export class ExecutionEngine extends EventEmitter {
         api_key: config.api_key || process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY,
         api_host: config.api_host || process.env.OPENAI_API_BASE || process.env.MINIMAX_API_HOST,
         project_root: this.projectRoot,
+        review: this.config.review,
+        feature_flags: this.config.feature_flags,
       });
       adapter.on('action', (act) =>
         this.emit('agent:action', { ...act, agent: 'native-reviewer' }),
@@ -121,7 +178,25 @@ export class ExecutionEngine extends EventEmitter {
     }
 
     const summary = this._generateSummary(results, startTime);
+    if (summary.duration_ms > (this.config.observability?.alerts?.long_run_ms || 60 * 60 * 1000)) {
+      this._emitAlert('LONG_RUNNING_EXECUTION', 'warning', {
+        duration_ms: summary.duration_ms,
+        threshold_ms: this.config.observability?.alerts?.long_run_ms || 60 * 60 * 1000,
+      });
+    }
     this.emit('plan:done', { plan, summary, results });
+    if (this.config.release?.enabled) {
+      const observationState = await this.releaseObserver.recordRun(summary);
+      summary.release_observation = {
+        window: observationState?.window || null,
+        total_runs: observationState?.aggregates?.total_runs || 0,
+      };
+      if (this.config.release?.auto_generate_report) {
+        const report = this.releaseObserver.generateEvaluationReport(summary, observationState);
+        const reportPath = await this.releaseObserver.writeEvaluationReport(report);
+        summary.final_evaluation_report = reportPath;
+      }
+    }
 
     this._log('INFO', `\n${'═'.repeat(50)}`);
     this._log('INFO', `📊 执行摘要:`);
@@ -364,6 +439,7 @@ export class ExecutionEngine extends EventEmitter {
   async _executeTask(task, plan) {
     this.emit('task:start', { task, plan });
     this._log('INFO', `\n[${task.id}] 开始: ${task.description}`);
+    const taskStartAt = Date.now();
 
     const context = await this._buildContext(task, plan);
     let codeResult;
@@ -397,6 +473,7 @@ export class ExecutionEngine extends EventEmitter {
       this.emit('task:error', { task, result: errRes });
       return errRes;
     }
+    await this._attachFileHashes(codeResult);
 
     const filesCreated = codeResult.output?.files_created || [];
     const filesModified = codeResult.output?.files_modified || [];
@@ -418,6 +495,15 @@ export class ExecutionEngine extends EventEmitter {
       this._log('INFO', `[${task.id}] ✅ 编程完成，文件变更数: ${totalFilesChanged}`);
     }
 
+    const executionConfig = this._buildTaskExecutionConfig(task);
+    const useController = executionConfig.feature_flags?.controller !== false;
+    const useFingerprint = executionConfig.feature_flags?.fingerprint !== false;
+    const ledger = new ProgressLedger();
+    const fingerprintEngine = useFingerprint ? new IssueFingerprintEngine() : null;
+    const convergenceController = useController
+      ? new ReviewConvergenceController(executionConfig.convergence)
+      : null;
+
     reviewResult = await this._executeWithRetry(
       async () => {
         this._log('INFO', `[${task.id}] 🔍 native-reviewer 审查代码中...`);
@@ -430,7 +516,11 @@ export class ExecutionEngine extends EventEmitter {
             ...(codeResult.output?.files_created || []),
             ...(codeResult.output?.files_modified || []),
           ],
-          context,
+          context: {
+            ...context,
+            review: executionConfig.review,
+            feature_flags: executionConfig.feature_flags,
+          },
         });
       },
       {
@@ -438,6 +528,7 @@ export class ExecutionEngine extends EventEmitter {
         taskId: task.id,
         phase: 'review',
         context,
+        retryByErrorCode: executionConfig.review?.retry_by_error_code !== false,
       },
     );
 
@@ -448,9 +539,58 @@ export class ExecutionEngine extends EventEmitter {
       return { task_id: task.id, status: 'failed', phase: 'review', error: 'Review agent failed' };
     }
 
-    let reviewScore = reviewResult.output?.score ?? 100;
-    let reviewIssues = reviewResult.output?.issues || [];
-    let reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
+    let reviewOutcome = this._extractReviewOutcome(reviewResult);
+    if (!reviewOutcome.ok) {
+      ledger.addRound({
+        score: 0,
+        critical_count: 0,
+        issue_count: 0,
+        issue_repeat_rate: 0,
+        file_change_effective: false,
+        parse_failed: reviewOutcome.error_code === REVIEW_ERROR_CODES.PARSE_FAILED,
+      });
+      const decision = useController ? convergenceController.evaluate(ledger) : { action: 'continue' };
+      this._recordAbCompare(task.id, {
+        stage: 'initial_review_failure',
+        cycle,
+        nextDecision: decision.action,
+        stopReason: decision.stop_reason || null,
+      });
+      if (decision.action === 'handoff') {
+        return this._buildHumanHandoffResult(task, {
+          cycle,
+          reviewScore: 0,
+          reviewIssues: [],
+          reviewComments: reviewOutcome.error,
+          codeResult,
+          stopReason: decision.stop_reason,
+          evidence: decision.evidence,
+        });
+      }
+      return {
+        task_id: task.id,
+        status: 'failed',
+        phase: 'review',
+        error: reviewOutcome.error || 'Review output invalid',
+        error_code: reviewOutcome.error_code,
+      };
+    }
+
+    let reviewScore = reviewOutcome.score;
+    let reviewIssues = reviewOutcome.issues;
+    let reviewComments = reviewOutcome.comments;
+    let previousIssues = reviewIssues;
+    const initialCriticalCount = this._countCriticalIssues(reviewIssues);
+    let criticalClearanceTime = initialCriticalCount === 0 ? 0 : null;
+    let lastRepeatIssueRate = 0;
+    ledger.addRound({
+      score: reviewScore,
+      critical_count: this._countCriticalIssues(reviewIssues),
+      issue_count: reviewIssues.length,
+      issue_repeat_rate: 0,
+      file_change_effective: true,
+      parse_failed: false,
+    });
     const REVIEW_THRESHOLD = 85;
     let needsFix = reviewScore < REVIEW_THRESHOLD;
 
@@ -459,7 +599,14 @@ export class ExecutionEngine extends EventEmitter {
       this._log('WARN', `[${task.id}] 🔄 评审 FAIL (第 ${cycle} 次修正)`);
       this._logIssues(reviewIssues);
 
-      const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult, reviewComments);
+      const fixTaskQueue = this._buildFixTaskQueue(reviewIssues);
+      const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue);
+      const prevCodeResult = codeResult;
+      const filesForRollback = [
+        ...(codeResult.output?.files_created || []),
+        ...(codeResult.output?.files_modified || []),
+      ];
+      const rollbackSnapshot = await this._captureFileSnapshots(filesForRollback);
 
       codeResult = await this._executeWithRetry(
         async () => {
@@ -493,6 +640,7 @@ export class ExecutionEngine extends EventEmitter {
           error: 'Fix iteration failed',
         };
       }
+      await this._attachFileHashes(codeResult);
 
       reviewResult = await this._executeWithRetry(
         async () => {
@@ -505,7 +653,11 @@ export class ExecutionEngine extends EventEmitter {
               ...(codeResult.output?.files_created || []),
               ...(codeResult.output?.files_modified || []),
             ],
-            context,
+            context: {
+              ...context,
+              review: executionConfig.review,
+              feature_flags: executionConfig.feature_flags,
+            },
           });
         },
         {
@@ -513,6 +665,7 @@ export class ExecutionEngine extends EventEmitter {
           taskId: task.id,
           phase: 're-review',
           context,
+          retryByErrorCode: executionConfig.review?.retry_by_error_code !== false,
         },
       );
 
@@ -527,10 +680,116 @@ export class ExecutionEngine extends EventEmitter {
         };
       }
 
-      const newScore = reviewResult.output?.score ?? 100;
+      reviewOutcome = this._extractReviewOutcome(reviewResult);
+      const fileChangeEffective = this._hasEffectiveFileChange(prevCodeResult, codeResult);
+      const repeatRate = useFingerprint
+        ? fingerprintEngine.computeRepeatRate(previousIssues, reviewOutcome.issues || [])
+        : 0;
+      lastRepeatIssueRate = repeatRate;
+      const currentCriticalCount = this._countCriticalIssues(reviewOutcome.issues || []);
+      if (criticalClearanceTime === null && initialCriticalCount > 0 && currentCriticalCount === 0) {
+        criticalClearanceTime = Date.now() - taskStartAt;
+      }
+      ledger.addRound({
+        score: reviewOutcome.score || 0,
+        critical_count: currentCriticalCount,
+        issue_count: (reviewOutcome.issues || []).length,
+        issue_repeat_rate: repeatRate,
+        file_change_effective: fileChangeEffective,
+        parse_failed: !reviewOutcome.ok && reviewOutcome.error_code === REVIEW_ERROR_CODES.PARSE_FAILED,
+      });
+      const decision = useController ? convergenceController.evaluate(ledger) : { action: 'continue' };
+      this._recordAbCompare(task.id, {
+        stage: 're_review',
+        cycle,
+        nextDecision: decision.action,
+        stopReason: decision.stop_reason || null,
+      });
+      if (decision.action === 'soft_stop') {
+        this._log('WARN', `[${task.id}] 触发软停止提示: ${decision.stop_reason}`);
+        this._emitAlert('SOFT_STOP_SUGGESTED', 'warning', {
+          task_id: task.id,
+          cycle,
+          evidence: decision.evidence || {},
+        });
+      }
+      if (decision.action === 'handoff') {
+        this._log('WARN', `[${task.id}] 触发收敛控制: ${decision.stop_reason}`);
+        if (decision.stop_reason === 'PARSE_FAILURE_STORM') {
+          this._emitAlert('PARSE_FAILURE_STORM', 'error', {
+            task_id: task.id,
+            cycle,
+            error_category: 'parse',
+            error_readable: '评审解析连续失败，已触发风暴告警',
+            evidence: decision.evidence || {},
+          });
+        }
+        return this._buildHumanHandoffResult(task, {
+          cycle,
+          reviewScore: reviewOutcome.score || reviewScore || 0,
+          reviewIssues: reviewOutcome.issues || reviewIssues,
+          reviewComments: reviewOutcome.comments || reviewOutcome.error || reviewComments,
+          codeResult,
+          stopReason: decision.stop_reason,
+          evidence: decision.evidence,
+          qualityMetrics: {
+            critical_clearance_time: criticalClearanceTime,
+            repeat_issue_rate: lastRepeatIssueRate,
+          },
+        });
+      }
+
+      if (!reviewOutcome.ok) {
+        return {
+          task_id: task.id,
+          status: 'failed',
+          phase: 're-review',
+          cycle,
+          error: reviewOutcome.error || 'Re-review output invalid',
+          error_code: reviewOutcome.error_code,
+        };
+      }
+
+      const newScore = reviewOutcome.score;
+      if (
+        this._shouldRollbackAndRefix({
+          previousScore: reviewScore,
+          newScore,
+          repeatRate,
+          fileChangeEffective,
+        })
+      ) {
+        this._log('WARN', `[${task.id}] 检测到低收益修复，执行局部回滚并二次修复`);
+        await this._rollbackFilesFromSnapshot(rollbackSnapshot);
+        const rollbackPrompt = this._buildRollbackRefixPrompt(task, reviewIssues, reviewComments);
+        codeResult = await this._executeWithRetry(
+          async () =>
+            this.dispatcher.dispatch({
+              id: `${task.id}_rollback_refix_${cycle}`,
+              type: 'modify',
+              description: rollbackPrompt,
+              subtasks: task.subtasks || [],
+              files: filesForRollback,
+              context: {
+                ...context,
+                review: executionConfig.review,
+                feature_flags: executionConfig.feature_flags,
+              },
+            }),
+          {
+            maxRetries: this.config.max_retries,
+            taskId: task.id,
+            phase: 'rollback-refix',
+            context,
+          },
+        );
+        await this._attachFileHashes(codeResult);
+      }
+
       reviewScore = newScore;
-      reviewIssues = reviewResult.output?.issues || [];
-      reviewComments = reviewResult.output?.summary || reviewResult.output?.comments || '';
+      reviewIssues = reviewOutcome.issues;
+      reviewComments = reviewOutcome.comments;
+      previousIssues = reviewIssues;
       needsFix = reviewScore < REVIEW_THRESHOLD;
       if (newScore >= REVIEW_THRESHOLD) {
         this._log('INFO', `[${task.id}] ✅ 修正后评分提升至 ${newScore}`);
@@ -545,11 +804,16 @@ export class ExecutionEngine extends EventEmitter {
         task_id: task.id,
         status: 'needs_human',
         phase: 'exhausted',
+        stop_reason: 'MAX_REVIEW_CYCLES',
         cycles: cycle,
         score: reviewScore,
         issues: reviewIssues,
         comments: reviewComments,
         code_result: codeResult,
+        quality_metrics: {
+          critical_clearance_time: criticalClearanceTime,
+          repeat_issue_rate: lastRepeatIssueRate,
+        },
       };
     }
 
@@ -565,6 +829,10 @@ export class ExecutionEngine extends EventEmitter {
       cycles: cycle,
       code_result: codeResult,
       review_result: reviewResult,
+      quality_metrics: {
+        critical_clearance_time: criticalClearanceTime,
+        repeat_issue_rate: lastRepeatIssueRate,
+      },
     };
     this.emit('task:done', { task, result: finalResult });
     return finalResult;
@@ -575,7 +843,7 @@ export class ExecutionEngine extends EventEmitter {
    * @private
    */
   async _executeWithRetry(fn, options = {}) {
-    const { maxRetries = 2, taskId, phase, context } = options;
+    const { maxRetries = 2, taskId, phase, context, retryByErrorCode = null } = options;
     let lastError;
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
@@ -608,7 +876,9 @@ export class ExecutionEngine extends EventEmitter {
             typeof errObj === 'string'
               ? errObj
               : errObj.message || errObj.type || JSON.stringify(errObj);
-          throw new Error(errMsg);
+          const wrappedError = new Error(errMsg);
+          wrappedError.error_code = result.error_code;
+          throw wrappedError;
         }
         return result;
       } catch (error) {
@@ -618,22 +888,46 @@ export class ExecutionEngine extends EventEmitter {
           error.name === 'AbortError' ||
           (error.cause && error.cause.message === 'STALLED_HEARTBEAT');
 
-        if (this._isRetryableError(error) || isStalled) {
+        const retryDecision =
+          retryByErrorCode === false
+            ? {
+                should_retry: this._isRetryableError(error),
+                reason: 'legacy_retry_pattern',
+                status_code: null,
+                error_code: error?.error_code || null,
+                suggested_delay_ms: null,
+              }
+            : this.policyEngine.getRetryDecision({
+                phase,
+                error,
+                errorCode: error?.error_code,
+              });
+        const shouldRetry = retryDecision.should_retry;
+        if (shouldRetry || isStalled) {
           if (attempt <= maxRetries) {
-            let delay = Math.pow(2, attempt - 1) * 1000;
-            if (
-              error.message &&
-              (error.message.includes('529') ||
-                error.message.includes('overloaded_error') ||
-                error.message.includes('429') ||
-                error.message.toLowerCase().includes('rate limit'))
-            ) {
-              delay = 120 * 1000; // Force 120 seconds backoff for overload/rate-limits
+            if (attempt >= (this.config.observability?.alerts?.retry_burst || 2)) {
+              this._emitAlert('ABNORMAL_RETRY_BURST', 'warning', {
+                task_id: taskId,
+                phase,
+                attempt,
+                max_retries: maxRetries,
+                error: error.message,
+                retry_reason: retryDecision.reason,
+                status_code: retryDecision.status_code,
+                error_code: retryDecision.error_code,
+                error_category: 'retry',
+                error_readable: '重试次数在短时间内快速累积，疑似异常重试风暴',
+              });
             }
+            const delay = this._resolveRetryDelay({
+              attempt,
+              retryDecision,
+              isStalled,
+            });
             const reason = isStalled ? '执行卡死发呆/超时中止' : error.message;
             this._log(
               'WARN',
-              `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}): ${reason}`,
+              `[${taskId}] 🔁 ${phase} 失败，${delay}ms 后重试 (${attempt}/${maxRetries}) [${retryDecision.reason}]: ${reason}`,
             );
             this.emit('task:retry_wait', {
               task_id: taskId,
@@ -642,6 +936,7 @@ export class ExecutionEngine extends EventEmitter {
               attempt,
               max_retries: maxRetries,
               error: reason,
+              retry_decision: retryDecision,
             });
             await this._sleep(delay);
           } else {
@@ -649,11 +944,21 @@ export class ExecutionEngine extends EventEmitter {
               'ERROR',
               `[${taskId}] ❌ ${phase} 在 ${maxRetries} 次重试后仍然失败: ${error.message}`,
             );
-            return { success: false, error: lastError.message, status: 'failed' };
+            return {
+              success: false,
+              error: lastError.message,
+              status: 'failed',
+              error_code: lastError?.error_code,
+            };
           }
         } else {
           this._log('ERROR', `[${taskId}] ❌ ${phase} 非重试性错误: ${error.message}`);
-          return { success: false, error: lastError.message, status: 'failed' };
+          return {
+            success: false,
+            error: lastError.message,
+            status: 'failed',
+            error_code: lastError?.error_code,
+          };
         }
       } finally {
         if (heartbeatInterval) {
@@ -664,6 +969,21 @@ export class ExecutionEngine extends EventEmitter {
     }
 
     return null;
+  }
+
+  _resolveRetryDelay({ attempt, retryDecision, isStalled = false }) {
+    if (isStalled) {
+      return 1000;
+    }
+
+    if (retryDecision?.suggested_delay_ms && retryDecision.suggested_delay_ms > 0) {
+      return retryDecision.suggested_delay_ms;
+    }
+
+    const baseDelay = Math.pow(2, attempt - 1) * 1000;
+    const capped = Math.min(baseDelay, 120000);
+    const jitter = Math.floor(Math.random() * Math.max(250, Math.floor(capped * 0.25)));
+    return capped + jitter;
   }
 
   /**
@@ -713,6 +1033,121 @@ export class ExecutionEngine extends EventEmitter {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  _resolveProjectFilePath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return null;
+    const normalized = filePath.replace(/\\/g, '/');
+    if (path.isAbsolute(filePath)) return filePath;
+    if (/^[A-Za-z]:\//.test(normalized)) return filePath;
+    return path.join(this.projectRoot, normalized);
+  }
+
+  async _captureFileSnapshots(files = []) {
+    const snapshots = [];
+    for (const file of files) {
+      const fullPath = this._resolveProjectFilePath(file);
+      if (!fullPath) continue;
+      try {
+        const content = await fs.readFile(fullPath, 'utf-8');
+        snapshots.push({ file, fullPath, existed: true, content });
+      } catch {
+        snapshots.push({ file, fullPath, existed: false, content: null });
+      }
+    }
+    return snapshots;
+  }
+
+  async _rollbackFilesFromSnapshot(snapshots = []) {
+    for (const snap of snapshots) {
+      if (!snap?.fullPath) continue;
+      try {
+        if (snap.existed) {
+          await fs.writeFile(snap.fullPath, snap.content ?? '', 'utf-8');
+        } else {
+          await fs.rm(snap.fullPath, { force: true });
+        }
+      } catch (error) {
+        this._log('WARN', `局部回滚失败: ${snap.file} -> ${error.message}`);
+      }
+    }
+  }
+
+  _buildTaskExecutionConfig(task = {}) {
+    const contextOverrides = task.context || {};
+    const featureFlags = {
+      ...(this.config.feature_flags || {}),
+      ...(contextOverrides.feature_flags || {}),
+      ...(task.feature_flags || {}),
+    };
+    const review = {
+      ...(this.config.review || {}),
+      ...(contextOverrides.review || {}),
+      ...(task.review || {}),
+    };
+    const convergence = {
+      ...(this.config.convergence || {}),
+      ...(contextOverrides.convergence || {}),
+      ...(task.convergence || {}),
+    };
+    return { feature_flags: featureFlags, review, convergence };
+  }
+
+  _shouldRollbackAndRefix({ previousScore, newScore, repeatRate, fileChangeEffective }) {
+    return (
+      Number.isFinite(previousScore) &&
+      Number.isFinite(newScore) &&
+      newScore <= previousScore &&
+      repeatRate >= 0.8 &&
+      fileChangeEffective === false
+    );
+  }
+
+  updateFeatureFlags(nextFlags = {}, meta = {}) {
+    const previous = { ...(this.config.feature_flags || {}) };
+    this.config.feature_flags = {
+      ...(this.config.feature_flags || {}),
+      ...(nextFlags || {}),
+    };
+    const record = {
+      timestamp: new Date().toISOString(),
+      previous,
+      next: { ...this.config.feature_flags },
+      reason: meta.reason || 'manual_update',
+      actor: meta.actor || 'system',
+    };
+    this.featureFlagAudit.push(record);
+    this._log(
+      'WARN',
+      `Feature flags updated: ${JSON.stringify({ reason: record.reason, actor: record.actor })}`,
+    );
+    return record;
+  }
+
+  _legacyExpectedDecision() {
+    return 'continue';
+  }
+
+  _recordAbCompare(taskId, { stage, cycle, nextDecision, stopReason }) {
+    if (!this.abStats.enabled || this.abStats.mode !== 'shadow') {
+      return;
+    }
+    const legacyDecision = this._legacyExpectedDecision();
+    const diverged = legacyDecision !== nextDecision;
+    this.abStats.total_compares += 1;
+    if (diverged) {
+      this.abStats.divergence_count += 1;
+      if (this.abStats.samples.length < 20) {
+        this.abStats.samples.push({
+          task_id: taskId,
+          stage,
+          cycle,
+          legacy_decision: legacyDecision,
+          new_decision: nextDecision,
+          stop_reason: stopReason || null,
+        });
+      }
+    }
+  }
+
   async _buildContext(task, plan) {
     return {
       task_id: task.id,
@@ -732,7 +1167,147 @@ export class ExecutionEngine extends EventEmitter {
     }
   }
 
-  _buildFixPrompt(task, codeResult, reviewResult, reviewComments) {
+  _extractReviewOutcome(reviewResult) {
+    if (!reviewResult) {
+      return { ok: false, error: 'Review result missing', error_code: REVIEW_ERROR_CODES.API_ERROR };
+    }
+    if (reviewResult.status === 'failed' || reviewResult.success === false) {
+      return {
+        ok: false,
+        error:
+          reviewResult.error_readable ||
+          reviewResult.output?.error_readable ||
+          reviewResult.error ||
+          reviewResult.output?.summary ||
+          'Review failed',
+        error_code: reviewResult.error_code || reviewResult.output?.error_code || REVIEW_ERROR_CODES.API_ERROR,
+      };
+    }
+    const score = reviewResult.output?.score;
+    if (typeof score !== 'number') {
+      return {
+        ok: false,
+        error: 'Review output missing score',
+        error_code: REVIEW_ERROR_CODES.INVALID_SCHEMA,
+      };
+    }
+    return {
+      ok: true,
+      score,
+      issues: reviewResult.output?.issues || [],
+      comments: reviewResult.output?.summary || reviewResult.output?.comments || '',
+    };
+  }
+
+  _countCriticalIssues(issues = []) {
+    return (issues || []).filter((issue) => String(issue?.severity || '').toUpperCase() === 'CRITICAL')
+      .length;
+  }
+
+  _buildFixTaskQueue(issues = []) {
+    const severityWeight = { CRITICAL: 3, WARNING: 2, INFO: 1 };
+    return [...(issues || [])]
+      .map((issue) => ({
+        ...issue,
+        _weight: severityWeight[String(issue?.severity || 'INFO').toUpperCase()] || 1,
+      }))
+      .sort((a, b) => b._weight - a._weight)
+      .map(({ _weight, ...rest }) => rest);
+  }
+
+  async _attachFileHashes(codeResult) {
+    if (!codeResult?.output) {
+      return codeResult;
+    }
+    const changedFiles = [
+      ...(codeResult.output.files_created || []),
+      ...(codeResult.output.files_modified || []),
+    ];
+    const uniqueFiles = [...new Set(changedFiles)];
+    const hashes = {};
+    for (const file of uniqueFiles) {
+      const fullPath = this._resolveProjectFilePath(file);
+      if (!fullPath) {
+        hashes[file] = null;
+        continue;
+      }
+      try {
+        const content = await fs.readFile(fullPath, 'utf-8');
+        hashes[file] = typeof content === 'string' ? this._hashContent(content) : null;
+      } catch {
+        hashes[file] = null;
+      }
+    }
+    codeResult.output.file_hashes = hashes;
+    return codeResult;
+  }
+
+  _hashContent(content) {
+    return createHash('sha256').update(String(content)).digest('hex');
+  }
+
+  _hasEffectiveFileChange(previousCodeResult, nextCodeResult) {
+    const before = new Set([
+      ...(previousCodeResult?.output?.files_created || []),
+      ...(previousCodeResult?.output?.files_modified || []),
+    ]);
+    const after = new Set([
+      ...(nextCodeResult?.output?.files_created || []),
+      ...(nextCodeResult?.output?.files_modified || []),
+    ]);
+    if (after.size === 0) {
+      return false;
+    }
+    for (const item of after) {
+      if (!before.has(item)) {
+        return true;
+      }
+    }
+
+    const beforeHashes = previousCodeResult?.output?.file_hashes || {};
+    const afterHashes = nextCodeResult?.output?.file_hashes || {};
+    let comparableCount = 0;
+
+    for (const item of after) {
+      if (!before.has(item)) continue;
+      const beforeHash = beforeHashes[item];
+      const afterHash = afterHashes[item];
+      if (typeof beforeHash === 'string' && typeof afterHash === 'string') {
+        comparableCount += 1;
+        if (beforeHash !== afterHash) {
+          return true;
+        }
+      }
+    }
+
+    if (comparableCount > 0) {
+      return false;
+    }
+    return false;
+  }
+
+  _buildHumanHandoffResult(task, payload) {
+    return {
+      task_id: task.id,
+      status: 'needs_human',
+      phase: 'handoff',
+      stop_reason: payload.stopReason,
+      cycles: payload.cycle || 0,
+      score: payload.reviewScore || 0,
+      issues: payload.reviewIssues || [],
+      comments: payload.reviewComments || '',
+      code_result: payload.codeResult,
+      quality_metrics: payload.qualityMetrics || {},
+      handoff: {
+        stop_reason: payload.stopReason,
+        evidence: payload.evidence || {},
+        last_suggestion: payload.reviewComments || '',
+        actions: ['人工检查关键问题', '确认是否继续自动修复', '必要时调整阈值后重试'],
+      },
+    };
+  }
+
+  _buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue = []) {
     const issues = reviewResult.output?.issues || [];
     let issueList;
 
@@ -750,6 +1325,16 @@ export class ExecutionEngine extends EventEmitter {
     if (!issueList) {
       issueList = `评审意见: ${reviewComments || '评分过低 (score < 60)'}`;
     }
+    const prioritizedFixes =
+      fixTaskQueue.length > 0
+        ? `\n差异化补丁任务队列(按优先级执行，避免全文重写):\n${fixTaskQueue
+            .slice(0, 8)
+            .map(
+              (issue, i) =>
+                `${i + 1}. [${issue.severity || 'INFO'}] 文件:${issue.file || 'unknown'} | 问题:${issue.title || '未命名问题'} | 建议:${issue.suggestion || '按评审意见修复'}`,
+            )
+            .join('\n')}\n`
+        : '';
 
     return `修正以下代码中的问题：
 
@@ -757,6 +1342,7 @@ export class ExecutionEngine extends EventEmitter {
 
 需修正的问题:
 ${issueList}
+${prioritizedFixes}
 
 ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
 
@@ -764,8 +1350,57 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
 1. 所有 CRITICAL 问题必须修复
 2. 所有 WARNING 问题尽量修复
 3. 保持原有功能不变
+4. 仅提交必要差异，禁止无关文件重写
 
 修改后确保代码通过质量检查。`;
+  }
+
+  _buildRollbackRefixPrompt(task, issues = [], reviewComments = '') {
+    const issueLines = (issues || [])
+      .slice(0, 6)
+      .map((issue, i) => `${i + 1}. [${issue.severity || 'INFO'}] ${issue.title || '未命名问题'} (${issue.file || 'unknown'})`)
+      .join('\n');
+    return `你上一次修复收益不足，系统已回滚相关文件。请进行更小粒度的二次修复：
+
+任务: ${task.description}
+
+二次修复清单:
+${issueLines || '- 按评审意见进行小范围补丁修复'}
+
+要求：
+1. 仅修改必要行，避免大段重写
+2. 优先解决重复出现的问题
+3. 保持接口与行为兼容`;
+  }
+
+  _emitAlert(rule, severity = 'warning', details = {}) {
+    const normalizedDetails = {
+      ...details,
+      error_code: details.error_code || null,
+      error_category: details.error_category || this._inferAlertCategory(rule, details),
+      error_readable: details.error_readable || null,
+    };
+    const alert = {
+      timestamp: new Date().toISOString(),
+      rule,
+      severity,
+      details: normalizedDetails,
+    };
+    this.alerts.push(alert);
+    this.emit('engine:alert', alert);
+    this._log('WARN', `[ALERT] ${rule}: ${JSON.stringify(normalizedDetails)}`);
+    return alert;
+  }
+
+  _inferAlertCategory(rule, details = {}) {
+    if (details?.error_category) {
+      return details.error_category;
+    }
+    if (rule.includes('PARSE')) return 'parse';
+    if (rule.includes('RETRY')) return 'retry';
+    if (rule.includes('DIMINISH') || rule.includes('SOFT_STOP')) return 'convergence';
+    if (rule.includes('LONG_RUNNING')) return 'runtime';
+    return 'general';
   }
 
   _logIssues(issues) {
@@ -822,8 +1457,11 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
     const needsHuman = results.filter((r) => r.status === 'needs_human').length;
     const totalCycles = results.reduce((sum, r) => sum + (r.cycles || 0), 0);
     const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / (results.length || 1);
+    const diminishingAbort = results.filter((r) => r.stop_reason === 'DIMINISHING_RETURNS').length;
+    const successBase = done || 1;
+    const total = results.length || 1;
 
-    return {
+    const summary = {
       total: results.length,
       done,
       failed,
@@ -832,13 +1470,65 @@ ${reviewComments ? `评审原话: "${reviewComments}"` : ''}
       needs_human: needsHuman,
       total_review_cycles: totalCycles,
       average_score: Math.round(avgScore),
+      convergence_rate: done / total,
+      avg_cycles: totalCycles / total,
+      diminishing_abort_rate: diminishingAbort / total,
+      tokens_per_success_task: this.tokenUsage.total / successBase,
+      wasted_token_ratio: (failed + needsHuman) / total,
       duration_ms: Date.now() - startTime,
     };
+    if (this.abStats.enabled) {
+      summary.ab_test = {
+        mode: this.abStats.mode,
+        total_compares: this.abStats.total_compares,
+        divergence_count: this.abStats.divergence_count,
+        divergence_rate:
+          this.abStats.total_compares > 0
+            ? this.abStats.divergence_count / this.abStats.total_compares
+            : 0,
+        samples: this.abStats.samples,
+      };
+    }
+    const repeatRates = results
+      .map((r) => r.quality_metrics?.repeat_issue_rate)
+      .filter((v) => typeof v === 'number');
+    const clearanceTimes = results
+      .map((r) => r.quality_metrics?.critical_clearance_time)
+      .filter((v) => typeof v === 'number');
+    summary.repeat_issue_rate =
+      repeatRates.length > 0 ? repeatRates.reduce((a, b) => a + b, 0) / repeatRates.length : 0;
+    summary.critical_clearance_time =
+      clearanceTimes.length > 0
+        ? clearanceTimes.reduce((a, b) => a + b, 0) / clearanceTimes.length
+        : null;
+
+    if (this.alerts.length > 0) {
+      summary.alert_count = this.alerts.length;
+      summary.alert_tail = this.alerts.slice(-10);
+      summary.alert_by_rule = this.alerts.reduce((acc, alert) => {
+        acc[alert.rule] = (acc[alert.rule] || 0) + 1;
+        return acc;
+      }, {});
+      summary.alert_by_category = this.alerts.reduce((acc, alert) => {
+        const category = alert.details?.error_category || 'general';
+        acc[category] = (acc[category] || 0) + 1;
+        return acc;
+      }, {});
+    }
+    if (this.featureFlagAudit.length > 0) {
+      summary.feature_flag_audit_count = this.featureFlagAudit.length;
+      summary.feature_flag_audit_tail = this.featureFlagAudit.slice(-5);
+    }
+    return summary;
   }
 
   _log(level, message) {
     const entry = { timestamp: new Date().toISOString(), level, message };
     this.logs.push(entry);
+    if (this.config.observability?.structured_json_logs) {
+      console.log(JSON.stringify({ type: 'engine_log', ...entry }));
+      return;
+    }
     console.log(`[${level}] ${message}`);
   }
 

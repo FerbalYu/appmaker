@@ -19,6 +19,7 @@ import { ProgressMonitor } from './src/monitor/index.js';
 import { createDaemon, DAEMON_STATE } from './src/daemon/index.js';
 import { MultiAgentThinker } from './src/thinker.js';
 import { AssetScoutAdapter } from './src/agents/asset-scout.js';
+import { installStreamJsonStdoutGuard } from './src/ops/stream-json-stdout-guard.js';
 import { promises as fs } from 'fs';
 import { existsSync, readdirSync } from 'fs';
 import path from 'path';
@@ -46,6 +47,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(2);
 const command = args[0];
+
+function normalizeOutputFormat(argv = []) {
+  let format = process.env.NCF_OUTPUT_FORMAT || process.env.OUTPUT_FORMAT || '';
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg) continue;
+    if (arg.startsWith('--output-format=')) {
+      format = arg.split('=')[1] || format;
+      argv.splice(i, 1);
+      i -= 1;
+      continue;
+    }
+    if (arg === '--output-format' && argv[i + 1]) {
+      format = argv[i + 1];
+      argv.splice(i, 2);
+      i -= 1;
+    }
+  }
+  return String(format || '').toLowerCase();
+}
+
+const outputFormat = normalizeOutputFormat(args);
+if (outputFormat === 'stream-json') {
+  installStreamJsonStdoutGuard();
+}
 
 let executeDir = process.cwd();
 let daemonDataDir = null;

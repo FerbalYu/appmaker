@@ -11,6 +11,9 @@
 import { AgentAdapter } from './base.js';
 import { createExecutionGuard, STOP_REASON, requestStop } from './runtime/guard.js';
 import { createTraceRecorder } from './runtime/trace.js';
+import { ReviewInputGate } from '../review/review-input-gate.js';
+import { ReviewerOutputParser } from '../review/reviewer-output-parser.js';
+import { createReviewError, REVIEW_ERROR_CODES } from '../review/error-codes.js';
 
 const NATIVE_REVIEWER_CONFIG = {
   name: 'native-reviewer',
@@ -47,6 +50,20 @@ export class NativeReviewerAdapter extends AgentAdapter {
       maxTotalChars: config.max_review_total_chars || 40000,
       maxGitDiffChars: config.max_review_git_diff_chars || 2000,
     };
+    const reviewConfig = config.review || {};
+    const featureFlags = config.feature_flags || {};
+    this.reviewConfig = {
+      input_gate_enabled: reviewConfig.input_gate_enabled !== false,
+      parser_fallback_enabled: reviewConfig.parser_fallback_enabled !== false,
+    };
+    this.featureFlags = {
+      gate: featureFlags.gate !== false,
+      parser: featureFlags.parser !== false,
+    };
+    this.inputGate = new ReviewInputGate();
+    this.outputParser = new ReviewerOutputParser({
+      extractJSON: (text) => this._extractJSON(text),
+    });
 
     if (config.project_root) {
       this.toolbox.config.workspace_root = config.project_root;
@@ -177,6 +194,17 @@ export class NativeReviewerAdapter extends AgentAdapter {
         );
       }
 
+      const runtimeFeatureFlags = {
+        ...this.featureFlags,
+        ...(task.context?.feature_flags || {}),
+        ...(task.feature_flags || {}),
+      };
+      const runtimeReviewConfig = {
+        ...this.reviewConfig,
+        ...(task.context?.review || {}),
+        ...(task.review || {}),
+      };
+
       const projectRoot = task.context?.project_root || '.';
       if (projectRoot) {
         this.toolbox.config.workspace_root = projectRoot;
@@ -186,6 +214,7 @@ export class NativeReviewerAdapter extends AgentAdapter {
       let codeToReview = '无需审查 (没有任何文件被创建或修改)';
       let filesReviewed = [];
       let filesToRead = [];
+      let fileContents = [];
 
       if (Array.isArray(task.files) && task.files.length > 0) {
         filesToRead = [...task.files];
@@ -200,24 +229,39 @@ export class NativeReviewerAdapter extends AgentAdapter {
       }
 
       if (filesToRead.length > 0) {
-        const fileContents = await this._readFilesForReview(filesToRead, projectRoot);
+        fileContents = await this._readFilesForReview(filesToRead, projectRoot);
+      }
 
-          if (fileContents.length > 0) {
-            codeToReview = fileContents
-              .map(
-                (f) =>
-                  `--- 文件: ${f.path} (${f.size} bytes${f.truncated ? ', truncated' : ''}) ---\n${f.content}\n`,
-              )
-              .join('\n');
-            filesReviewed = fileContents.map((f) => f.path);
-
-            const lspDiagnostics = await this._getLspDiagnostics(filesToRead);
-            if (lspDiagnostics.length > 0) {
-              codeToReview += '\n\n--- LSP 诊断信息 ---\n';
-              codeToReview += JSON.stringify(lspDiagnostics, null, 2);
-            }
-          }
+      if (runtimeFeatureFlags.gate && runtimeReviewConfig.input_gate_enabled) {
+        const gateResult = this.inputGate.validate({ filesToRead, fileContents });
+        if (!gateResult.ok) {
+          return this._formatFailedResult({
+            task_id: task.id,
+            error: gateResult.error,
+            error_code: gateResult.error_code || REVIEW_ERROR_CODES.EMPTY_INPUT,
+            error_readable: gateResult.error_readable,
+            error_category: gateResult.error_category,
+            files_reviewed: filesReviewed,
+            duration_ms: Date.now() - startTime,
+          });
         }
+      }
+
+      if (fileContents.length > 0) {
+        codeToReview = fileContents
+          .map(
+            (f) =>
+              `--- 文件: ${f.path} (${f.size} bytes${f.truncated ? ', truncated' : ''}) ---\n${f.content}\n`,
+          )
+          .join('\n');
+        filesReviewed = fileContents.map((f) => f.path);
+
+        const lspDiagnostics = await this._getLspDiagnostics(filesToRead);
+        if (lspDiagnostics.length > 0) {
+          codeToReview += '\n\n--- LSP 诊断信息 ---\n';
+          codeToReview += JSON.stringify(lspDiagnostics, null, 2);
+        }
+      }
 
       const gitDiff = await this._getGitDiff(projectRoot);
       if (gitDiff) {
@@ -354,12 +398,26 @@ ${codeToReview}
       }
 
       const contentStr = message.content;
-      const resultObj = this._extractJSON(contentStr);
-
-      if (!resultObj || typeof resultObj.score !== 'number') {
-        stop(STOP_REASON.API_ERROR, 'parse', 'review json parse failed');
-        throw new Error(`解析 JSON 失败 (评分未能提取): ${contentStr.substring(0, 150)}...`);
+      const parseResult =
+        runtimeFeatureFlags.parser && runtimeReviewConfig.parser_fallback_enabled
+          ? this.outputParser.parse(contentStr)
+          : this._parseReviewLegacy(contentStr);
+      if (!parseResult.ok) {
+        stop(STOP_REASON.API_ERROR, 'parse', parseResult.error);
+        return this._formatFailedResult({
+          task_id: task.id,
+          error: parseResult.error,
+          error_code: parseResult.error_code,
+          error_readable: parseResult.error_readable,
+          error_category: parseResult.error_category,
+          files_reviewed: filesReviewed,
+          duration_ms: Date.now() - startTime,
+          stop_reason: STOP_REASON.API_ERROR,
+          execution_trace: traceRecorder.traces,
+          tokens_used: data.usage?.total_tokens || 0,
+        });
       }
+      const resultObj = parseResult.data;
 
       stop(STOP_REASON.COMPLETED, 'done', 'review completed');
       traceRecorder.appendExitTrace(guard);
@@ -385,6 +443,18 @@ ${codeToReview}
       }
       traceRecorder.appendExitTrace(guard);
       console.error(`[${this.name}] 执行异常: `, error.message);
+      if (error?.error_code) {
+        return this._formatFailedResult({
+          task_id: task.id,
+          error: error.message,
+          error_code: error.error_code,
+          error_readable: error.error_readable,
+          error_category: error.error_category,
+          duration_ms: Date.now() - startTime,
+          stop_reason: STOP_REASON.API_ERROR,
+          execution_trace: traceRecorder.traces,
+        });
+      }
       return this.handleError(error);
     }
   }
@@ -407,6 +477,51 @@ ${codeToReview}
         tokens_used: rawResult.tokens_used || 0,
       },
       errors: [],
+    };
+  }
+
+  _formatFailedResult(rawResult) {
+    return {
+      task_id: rawResult.task_id || 'unknown',
+      agent: this.name,
+      status: 'failed',
+      success: false,
+      error: rawResult.error || 'review failed',
+      error_code: rawResult.error_code || REVIEW_ERROR_CODES.API_ERROR,
+      output: {
+        score: 0,
+        summary: rawResult.error || 'review failed',
+        issues: [],
+        files_reviewed: rawResult.files_reviewed || [],
+        stop_reason: rawResult.stop_reason || STOP_REASON.API_ERROR,
+        execution_trace: rawResult.execution_trace || [],
+        error_code: rawResult.error_code || REVIEW_ERROR_CODES.API_ERROR,
+        error_readable: rawResult.error_readable || '',
+        error_category: rawResult.error_category || '',
+      },
+      metrics: {
+        duration_ms: rawResult.duration_ms || 0,
+        tokens_used: rawResult.tokens_used || 0,
+      },
+      errors: [rawResult.error || 'review failed'],
+    };
+  }
+
+  _parseReviewLegacy(contentStr) {
+    const resultObj = this._extractJSON(contentStr);
+    if (!resultObj || typeof resultObj.score !== 'number') {
+      return createReviewError({
+        code: REVIEW_ERROR_CODES.PARSE_FAILED,
+        detail: 'legacy 解析路径未获得有效 score',
+      });
+    }
+    return {
+      ok: true,
+      data: {
+        score: resultObj.score,
+        summary: resultObj.summary || resultObj.comments || '',
+        issues: Array.isArray(resultObj.issues) ? resultObj.issues : [],
+      },
     };
   }
 }

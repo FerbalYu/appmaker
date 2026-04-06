@@ -4,6 +4,9 @@ import { NativeReviewerAdapter } from '../src/agents/native-reviewer.js';
 import { MinimaxMCPAdapter } from '../src/agents/minimax-mcp.js';
 import { AssetScoutAdapter } from '../src/agents/asset-scout.js';
 import { RainmakerAdapter } from '../src/agents/rainmaker.js';
+import { ReviewInputGate } from '../src/review/review-input-gate.js';
+import { ReviewerOutputParser } from '../src/review/reviewer-output-parser.js';
+import { REVIEW_ERROR_CODES } from '../src/review/error-codes.js';
 
 describe('Agents & Dispatcher', () => {
   it('should initialize NativeCoderAdapter and NativeReviewerAdapter', () => {
@@ -598,6 +601,83 @@ describe('Agents & Dispatcher', () => {
     cleanup();
     externalController.abort();
     expect(signal.aborted).toBe(true);
+  });
+
+  it('should reject empty review input by input gate', () => {
+    const gate = new ReviewInputGate();
+    const result = gate.validate({ filesToRead: [], fileContents: [] });
+    expect(result.ok).toBe(false);
+    expect(result.error_code).toBe(REVIEW_ERROR_CODES.EMPTY_INPUT);
+    expect(result.error_readable).toContain('评审输入为空');
+  });
+
+  it('should classify file read failures as tool execution errors in input gate', () => {
+    const gate = new ReviewInputGate();
+    const result = gate.validate({ filesToRead: ['a.js'], fileContents: [] });
+    expect(result.ok).toBe(false);
+    expect(result.error_code).toBe(REVIEW_ERROR_CODES.TOOL_EXECUTION_FAILED);
+    expect(result.error_category).toBe('tool');
+  });
+
+  it('should classify invalid reviewer output schema', () => {
+    const parser = new ReviewerOutputParser({
+      extractJSON: () => ({ summary: 'missing score', issues: [] }),
+    });
+    const result = parser.parse('ignored');
+    expect(result.ok).toBe(false);
+    expect(result.error_code).toBe(REVIEW_ERROR_CODES.INVALID_SCHEMA);
+    expect(result.error_category).toBe('schema');
+    expect(result.error_readable).toContain('评审输出结构不合法');
+  });
+
+  it('should allow empty files review when gate feature flag is off', async () => {
+    const reviewer = new NativeReviewerAdapter({
+      api_key: 'test-key',
+      feature_flags: { gate: false, parser: true },
+    });
+    reviewer._getGitDiff = async () => '';
+    reviewer._requestCompletion = async () => ({
+      ok: true,
+      json: async () => ({
+        usage: { total_tokens: 1 },
+        choices: [{ message: { content: '{"score":90,"summary":"ok","issues":[]}' } }],
+      }),
+    });
+
+    const result = await reviewer.execute({
+      id: 'r_gate_off',
+      description: 'review without files',
+      files: [],
+      context: { project_root: '.' },
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.output.score).toBe(90);
+  });
+
+  it('should allow task-level gate override without recreating adapter', async () => {
+    const reviewer = new NativeReviewerAdapter({
+      api_key: 'test-key',
+      feature_flags: { gate: true, parser: true },
+    });
+    reviewer._getGitDiff = async () => '';
+    reviewer._requestCompletion = async () => ({
+      ok: true,
+      json: async () => ({
+        usage: { total_tokens: 1 },
+        choices: [{ message: { content: '{"score":91,"summary":"ok","issues":[]}' } }],
+      }),
+    });
+
+    const result = await reviewer.execute({
+      id: 'r_gate_override',
+      description: 'review without files',
+      files: [],
+      context: { project_root: '.', feature_flags: { gate: false } },
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.output.score).toBe(91);
   });
 
   it('should share base JSON extraction across other adapters', () => {
