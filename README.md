@@ -27,7 +27,7 @@
 | 依赖        | 版本    | 说明                               |
 | ----------- | ------- | ---------------------------------- |
 | **Bun**     | ≥ 1.0.0 | 运行时环境                         |
-| **API Key** | —       | MiniMax / OpenAI / Deepseek 三选一 |
+| **API Key** | —       | MiniMax / OpenAI 二选一            |
 | **Python**  | ≥ 3.8   | MCP 适配器需要（`uvx` 命令）       |
 
 ### 安装 Bun
@@ -49,8 +49,9 @@ curl -fsSL https://bun.sh/install | bash
 ```bash
 git clone <repo-url> && cd nexus-code-forge
 bun install
-cp .env.example .env
 ```
+
+> 本仓库默认不提供 `.env.example`，请手动创建 `.env` 文件。
 
 ### 2. 配置 API Key
 
@@ -59,7 +60,7 @@ cp .env.example .env
 ```ini
 # 方案 A: MiniMax（推荐，MCP 规划需要）
 MINIMAX_API_KEY=your_key_here
-MINIMAX_API_MODEL=MiniMax-Text-01
+MINIMAX_API_MODEL=MiniMax-M2.7
 MINIMAX_API_HOST=https://api.minimaxi.com
 
 # 方案 B: OpenAI
@@ -71,35 +72,43 @@ OPENAI_API_BASE=https://api.openai.com/v1
 ### 3. 运行
 
 ```bash
+# 注意：CLI 禁止在 NCF 主程序目录下直接运行，需始终指定 --dir
+
 # 推荐：一键全自动
-bun cli.js run "做一个博客系统，支持文章发布和评论"
+bun cli.js run "做一个博客系统，支持文章发布和评论" --dir ./my-project
 
 # 沙箱模式（仅模拟，不实际写文件）
-bun cli.js run "做一个博客系统" --mock
+bun cli.js run "做一个博客系统" --mock --dir ./my-project
 
 # 跳过确认
-bun cli.js run "做一个博客系统" --yes
+bun cli.js run "做一个博客系统" --yes --dir ./my-project
 
-# 指定工作目录
-bun cli.js run "做一个博客系统" --dir ./my-project
+# 仅提供 --dir 时，自动触发 Rainmaker 全局巡检与修复规划
+bun cli.js run --dir ./my-project
 ```
 
 ---
 
 ## CLI 命令
 
-| 命令                             | 说明                     |
-| -------------------------------- | ------------------------ |
-| `bun cli.js run "<需求>"`        | 全自动生成并执行（推荐） |
-| `bun cli.js plan "<需求>"`       | 仅生成计划文件           |
-| `bun cli.js execute <plan.json>` | 执行已有计划             |
-| `bun cli.js health`              | 检查 Agent 可用性        |
+| 命令                             | 说明                               |
+| -------------------------------- | ---------------------------------- |
+| `bun cli.js run "<需求>"`        | 全自动生成并执行（推荐）           |
+| `bun cli.js plan "<需求>"`       | 仅生成计划文件                     |
+| `bun cli.js execute <plan.json>` | 执行已有计划                       |
+| `bun cli.js think "<问题>"`      | 启动 4-Agent 思考模式              |
+| `bun cli.js health`              | 检查 Agent 可用性                  |
+| `bun cli.js status`              | 查看当前执行状态                   |
+| `bun cli.js logs [type]`         | 查看日志（`execution/quality/...`） |
+| `bun cli.js config [key]`        | 查看配置                           |
+| `bun cli.js daemon`              | 查看守护进程状态                   |
 
 | 全局选项       | 说明         |
 | -------------- | ------------ |
 | `--dir <path>` | 指定工作目录 |
 | `--no-daemon`  | 禁用守护进程 |
 | `--mock`       | 沙箱模拟模式 |
+| `--dry-run`    | `--mock` 别名 |
 | `--yes` / `-y` | 跳过确认     |
 | `DEBUG=1`      | 完整错误堆栈 |
 
@@ -117,7 +126,7 @@ flowchart LR
     subgraph Execution["执行循环"]
         C --> D["NativeCoder 编码"]
         D --> E["NativeReviewer 评审"]
-        E -->|FAIL| F["SelfCorrector 修正"]
+        E -->|FAIL| F["NativeCoder 修正循环"]
         F --> D
         E -->|PASS| G{还有任务?}
         G -->|是| D
@@ -156,21 +165,22 @@ Agent 通过 UniversalToolbox 获得以下能力：
 
 | 分类         | 工具                                                 | 说明         |
 | ------------ | ---------------------------------------------------- | ------------ |
-| **文件系统** | `read_file`, `write_file`, `delete_file`, `list_dir` | 文件读写删查 |
-| **Bash**     | `bash_exec`, `npm_install`, `run_tests`              | 命令执行     |
+| **文件系统** | `read_file`, `write_file`, `delete_file`, `list_directory` | 文件读写删查 |
+| **Bash**     | `bash_execute`, `powershell_execute`, `bash_background` | 命令执行     |
 | **Git**      | `git_status`, `git_commit`, `git_branch`             | 版本控制     |
-| **包管理**   | `check_dependency`, `find_package`                   | 依赖分析     |
+| **包管理**   | `npm_install`, `npm_run`, `yarn_install`, `pnpm_install` | 依赖管理     |
 | **任务**     | `todo_write`, `task_create`, `task_update`           | 任务管理     |
 
 ### 权限安全
 
 PermissionClassifier 自动评估操作风险：
 
-| 风险等级   | 示例操作                    | 处理方式   |
-| ---------- | --------------------------- | ---------- |
-| **低风险** | 读文件、查看目录            | 自动放行   |
-| **中风险** | 写文件、执行测试            | 日志记录   |
-| **高风险** | 删除系统文件、执行 `rm -rf` | 需人工确认 |
+| 风险等级   | 示例操作                    | 处理方式                     |
+| ---------- | --------------------------- | ---------------------------- |
+| **低风险** | 读文件、查看目录            | 自动放行 (`AUTO_ALLOW`)      |
+| **中风险** | 普通写文件、常规命令        | AI 判断 (`DELEGATE_AI`)      |
+| **高风险** | 特权命令、未授权命令        | 需人工确认 (`NEED_CONFIRM`)  |
+| **严重**   | `rm -rf` 等危险模式命令     | 自动拒绝 (`AUTO_DENY`)       |
 
 ---
 
@@ -230,7 +240,7 @@ const results = await dispatchParallel([
 | ------------ | ------------------------------------------- |
 | **地址**     | `http://localhost:8088`（端口冲突自动递增） |
 | **协议**     | Server-Sent Events (SSE)                    |
-| **自动打开** | 非 Windows 自动调用浏览器                   |
+| **自动打开** | Windows / macOS / Linux 均会尝试自动打开浏览器 |
 
 ---
 
@@ -240,7 +250,7 @@ const results = await dispatchParallel([
 | --------------------- | ------- | ----------------------------------- |
 | 安全漏洞 / 架构违规   | 🔴 严重 | 立即停止                            |
 | Token 超限 / 资源耗尽 | 🔴 严重 | 停止接受新任务                      |
-| 评审失败              | 🟡 一般 | SelfCorrector 自动修正（最多 3 轮） |
+| 评审失败              | 🟡 一般 | NativeCoder 修正循环（受 `max_review_cycles` 控制） |
 | 网络超时              | 🟡 一般 | 自动重试（最多 3 次）               |
 
 ---
