@@ -9,13 +9,23 @@
  */
 
 import { AgentAdapter } from './base.js';
-import { jsonrepair } from 'jsonrepair';
+import { createExecutionGuard, STOP_REASON, requestStop } from './runtime/guard.js';
+import { createTraceRecorder } from './runtime/trace.js';
 
 const NATIVE_REVIEWER_CONFIG = {
   name: 'native-reviewer',
   type: 'api',
   capabilities: ['code-review', 'quality-assurance', 'static-analysis'],
 };
+const REVIEWER_TOOL_ALLOWLIST = new Set([
+  'read_file',
+  'list_directory',
+  'git_diff',
+  'git_status',
+  'lsp_diagnostics',
+  'search_files',
+  'glob_pattern',
+]);
 
 export class NativeReviewerAdapter extends AgentAdapter {
   constructor(config = {}) {
@@ -52,7 +62,7 @@ export class NativeReviewerAdapter extends AgentAdapter {
    * @private
    */
   _getToolsDescription() {
-    const tools = this.getTools();
+    const tools = this.getTools().filter((t) => REVIEWER_TOOL_ALLOWLIST.has(t.name));
     const categories = {
       file: tools.filter((t) => t.category === 'file_system').slice(0, 4),
       bash: tools.filter((t) => t.category === 'bash').slice(0, 2),
@@ -155,6 +165,11 @@ export class NativeReviewerAdapter extends AgentAdapter {
 
   async execute(task) {
     const startTime = Date.now();
+    const guard = createExecutionGuard();
+    const traceRecorder = createTraceRecorder();
+    const stop = (reason, stage, note) => {
+      requestStop(guard, { reason, stage, note });
+    };
     try {
       if (!this.apiKey) {
         throw new Error(
@@ -163,6 +178,9 @@ export class NativeReviewerAdapter extends AgentAdapter {
       }
 
       const projectRoot = task.context?.project_root || '.';
+      if (projectRoot) {
+        this.toolbox.config.workspace_root = projectRoot;
+      }
       const toolsDescription = this._getToolsDescription();
 
       let codeToReview = '无需审查 (没有任何文件被创建或修改)';
@@ -285,21 +303,30 @@ ${codeToReview}
         payload.extra_body = { reasoning_split: true };
       }
 
-      const abortController = task.context?.abortController || new AbortController();
-      const hardTimeoutId = setTimeout(() => abortController.abort(), 2 * 60 * 60 * 1000); // 2h hard kill
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: abortController.signal,
-      });
-      clearTimeout(hardTimeoutId);
+      const externalSignal = task.context?.abortController?.signal || task.context?.abortSignal;
+      if (externalSignal?.aborted) {
+        stop(STOP_REASON.EXTERNAL_ABORT, 'pre_request', 'external abort signal detected');
+        traceRecorder.appendExitTrace(guard);
+        return this._formatResult(
+          {
+            task_id: task.id,
+            success: true,
+            score: 0,
+            summary: '任务在审查前被外部取消。',
+            issues: [],
+            files_reviewed: filesReviewed,
+            stop_reason: STOP_REASON.EXTERNAL_ABORT,
+            execution_trace: traceRecorder.traces,
+            tokens_used: 0,
+            duration_ms: Date.now() - startTime,
+          },
+          startTime,
+        );
+      }
+      const res = await this._requestCompletion(endpoint, payload, externalSignal);
 
       if (!res.ok) {
+        stop(STOP_REASON.API_ERROR, 'request', `http ${res.status}`);
         throw new Error(`API Error ${res.status}: ${await res.text()}`);
       }
 
@@ -330,8 +357,12 @@ ${codeToReview}
       const resultObj = this._extractJSON(contentStr);
 
       if (!resultObj || typeof resultObj.score !== 'number') {
+        stop(STOP_REASON.API_ERROR, 'parse', 'review json parse failed');
         throw new Error(`解析 JSON 失败 (评分未能提取): ${contentStr.substring(0, 150)}...`);
       }
+
+      stop(STOP_REASON.COMPLETED, 'done', 'review completed');
+      traceRecorder.appendExitTrace(guard);
 
       return this._formatResult(
         {
@@ -341,85 +372,21 @@ ${codeToReview}
           summary: resultObj.summary || resultObj.comments || '无评价',
           issues: resultObj.issues || [],
           files_reviewed: filesReviewed,
+          stop_reason: STOP_REASON.COMPLETED,
+          execution_trace: traceRecorder.traces,
           tokens_used: data.usage?.total_tokens || 0,
           duration_ms: Date.now() - startTime,
         },
         startTime,
       );
     } catch (error) {
+      if (guard.stopReason === STOP_REASON.COMPLETED) {
+        stop(STOP_REASON.API_ERROR, 'error', error.message);
+      }
+      traceRecorder.appendExitTrace(guard);
       console.error(`[${this.name}] 执行异常: `, error.message);
       return this.handleError(error);
     }
-  }
-
-  _extractJSON(output) {
-    if (typeof output !== 'string') return output;
-
-    // Capture <think> block and emit to telemetry before stripping
-    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch && typeof this.emit === 'function') {
-      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
-    }
-
-    // Strip <think>...</think> reasoning tags which corrupt JSON matching
-    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    // 1. Try code blocks
-    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    if (codeBlocks.length > 0) {
-      for (const match of codeBlocks) {
-        try {
-          return JSON.parse(match[1].trim());
-        } catch (e) {
-          try {
-            return JSON.parse(jsonrepair(match[1].trim()));
-          } catch (e2) {
-            /* ignore repair errors */
-          }
-        }
-      }
-    }
-
-    // 2. Try JSON Object syntaxes through brace matching
-    const braceCount = (output.match(/[{}]/g) || []).length;
-    if (braceCount >= 2) {
-      let depth = 0,
-        validEnd = -1,
-        firstBrace = output.indexOf('{');
-      if (firstBrace !== -1) {
-        for (let i = firstBrace; i < output.length; i++) {
-          if (output[i] === '{') depth++;
-          else if (output[i] === '}') {
-            depth--;
-            if (depth === 0) {
-              validEnd = i;
-              break;
-            }
-          }
-        }
-        if (validEnd > firstBrace) {
-          const candidate = output.substring(firstBrace, validEnd + 1);
-          try {
-            return JSON.parse(candidate);
-          } catch (e) {
-            try {
-              return JSON.parse(jsonrepair(candidate));
-            } catch (_) {
-              /* ignore repair errors */
-            }
-          }
-        }
-      }
-    }
-
-    // 3. Fallback to repair whole string
-    try {
-      return JSON.parse(jsonrepair(output));
-    } catch {
-      console.warn(`[${this.name}] 全文 JSON 解析失败`);
-    }
-
-    return null;
   }
 
   _formatResult(rawResult, startTime) {
@@ -432,6 +399,8 @@ ${codeToReview}
         summary: rawResult.summary,
         issues: rawResult.issues,
         files_reviewed: rawResult.files_reviewed || [],
+        stop_reason: rawResult.stop_reason || STOP_REASON.COMPLETED,
+        execution_trace: rawResult.execution_trace || [],
       },
       metrics: {
         duration_ms: rawResult.duration_ms || Date.now() - startTime,

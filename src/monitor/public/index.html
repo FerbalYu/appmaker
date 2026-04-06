@@ -891,6 +891,33 @@
               const taskTokens = data.result?.code_result?.metrics?.tokens_used || 0;
               tokens.value += taskTokens;
               addLog('done', `Task [${taskId}] finished. +${taskTokens} tokens`);
+
+              const trace = data.result?.code_result?.output?.execution_trace || [];
+              if (Array.isArray(trace) && trace.length > 0) {
+                trace.forEach((item) => {
+                  const actionTime = new Date().toLocaleTimeString([], {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  });
+                  telemetryActions.value.unshift({
+                    id: Date.now() + Math.random(),
+                    toolCallId: item.tool_call_id || `trace_${taskId}_${item.step}_${item.tool}`,
+                    agent: 'native-coder',
+                    type: item.success ? 'tool_done' : 'tool_error',
+                    tool: item.tool || 'unknown_tool',
+                    target: item.args_summary || '',
+                    content: item.error
+                      ? JSON.stringify({ success: false, error: item.error, duration_ms: item.duration_ms })
+                      : JSON.stringify({ success: true, duration_ms: item.duration_ms }),
+                    time: actionTime,
+                  });
+                });
+                if (telemetryActions.value.length > 100) {
+                  telemetryActions.value = telemetryActions.value.slice(0, 100);
+                }
+              }
             } else if (event === 'task:error') {
               const taskId = data.task ? data.task.id : data.id;
               activeTasksMap.value.delete(taskId);

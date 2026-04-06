@@ -1,6 +1,5 @@
 import { AgentAdapter } from './base.js';
 import { MultiAgentThinker } from '../thinker.js';
-import { jsonrepair } from 'jsonrepair';
 
 const RAINMAKER_CONFIG = {
   name: 'rainmaker',
@@ -18,46 +17,6 @@ export class RainmakerAdapter extends AgentAdapter {
 
   async healthCheck() {
     return Boolean(process.env.OPENAI_API_KEY || process.env.MINIMAX_API_KEY || this.api_key);
-  }
-
-  _extractJSON(output) {
-    if (typeof output !== 'string') return output;
-
-    const withoutThink = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    const codeBlocks = [...withoutThink.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-
-    for (const match of codeBlocks) {
-      try {
-        return JSON.parse(match[1].trim());
-      } catch {
-        try {
-          return JSON.parse(jsonrepair(match[1].trim()));
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    const firstBrace = withoutThink.indexOf('{');
-    const lastBrace = withoutThink.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      const candidate = withoutThink.slice(firstBrace, lastBrace + 1);
-      try {
-        return JSON.parse(candidate);
-      } catch {
-        try {
-          return JSON.parse(jsonrepair(candidate));
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    try {
-      return JSON.parse(jsonrepair(withoutThink));
-    } catch {
-      return null;
-    }
   }
 
   async execute(task) {

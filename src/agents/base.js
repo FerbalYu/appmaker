@@ -12,6 +12,7 @@
 
 import { UniversalToolbox } from './universal-toolbox.js';
 import { EventEmitter } from 'events';
+import { jsonrepair } from 'jsonrepair';
 
 export class AgentAdapter extends EventEmitter {
   constructor(config) {
@@ -189,6 +190,111 @@ export class AgentAdapter extends EventEmitter {
       results.push(await this.executeTool(call.tool, call.args));
     }
     return results;
+  }
+
+  _createRequestSignal(externalSignal, timeoutMs = 2 * 60 * 60 * 1000) {
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener('abort', onExternalAbort);
+      }
+    }
+
+    const timerId = setTimeout(() => controller.abort(), timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timerId);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
+    };
+
+    return { signal: controller.signal, cleanup };
+  }
+
+  async _requestCompletion(endpoint, payload, externalSignal, timeoutMs = 2 * 60 * 60 * 1000) {
+    const { signal, cleanup } = this._createRequestSignal(externalSignal, timeoutMs);
+    try {
+      return await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+    } finally {
+      cleanup();
+    }
+  }
+
+  _extractJSON(output) {
+    if (typeof output !== 'string') return output;
+
+    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch && typeof this.emit === 'function') {
+      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
+    }
+
+    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+    if (codeBlocks.length > 0) {
+      for (const match of codeBlocks) {
+        try {
+          return JSON.parse(match[1].trim());
+        } catch (e) {
+          try {
+            return JSON.parse(jsonrepair(match[1].trim()));
+          } catch (e2) {
+            /* ignore repair errors */
+          }
+        }
+      }
+    }
+
+    const braceCount = (output.match(/[{}]/g) || []).length;
+    if (braceCount >= 2) {
+      let depth = 0;
+      let validEnd = -1;
+      const firstBrace = output.indexOf('{');
+      if (firstBrace !== -1) {
+        for (let i = firstBrace; i < output.length; i++) {
+          if (output[i] === '{') depth++;
+          else if (output[i] === '}') {
+            depth--;
+            if (depth === 0) {
+              validEnd = i;
+              break;
+            }
+          }
+        }
+        if (validEnd > firstBrace) {
+          const candidate = output.substring(firstBrace, validEnd + 1);
+          try {
+            return JSON.parse(candidate);
+          } catch (e) {
+            try {
+              return JSON.parse(jsonrepair(candidate));
+            } catch (_) {
+              /* ignore repair errors */
+            }
+          }
+        }
+      }
+    }
+
+    try {
+      return JSON.parse(jsonrepair(output));
+    } catch {
+      console.warn(`[${this.name}] 全文 JSON 解析失败`);
+    }
+
+    return null;
   }
 
   /**

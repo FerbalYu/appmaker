@@ -84,6 +84,8 @@ export class AgentDispatcher {
       totalTasks: 0,
       successTasks: 0,
       failedTasks: 0,
+      retriedTasks: 0,
+      retryAttempts: 0,
       totalTokens: 0,
       avgDuration: 0,
     });
@@ -115,10 +117,9 @@ export class AgentDispatcher {
     const enrichedTask = this._enrichTask(task, agentType);
     const startTime = Date.now();
 
-    await this._waitForSlot();
-
     let agentInstance = null;
     try {
+      await this._waitForSlot();
       this.activeTasks++;
       this._updateAgentMetrics(agentType, 'start');
 
@@ -127,15 +128,20 @@ export class AgentDispatcher {
         agentInstance.setPermissionClassifier(this.permissionClassifier);
       }
 
-      const result = await this._executeWithTimeout(
-        agentInstance.execute(enrichedTask),
-        this.config.request_timeout,
+      const { result, retryAttempts } = await this._executeWithRetry(
+        () =>
+          this._executeWithTimeout(
+            agentInstance.execute(enrichedTask),
+            this.config.request_timeout,
+            agentType,
+            task.id,
+          ),
         agentType,
         task.id,
       );
 
       const duration = Date.now() - startTime;
-      this._updateAgentMetrics(agentType, 'success', 0, duration);
+      this._updateAgentMetrics(agentType, 'success', 0, duration, retryAttempts);
 
       return {
         ...result,
@@ -144,7 +150,13 @@ export class AgentDispatcher {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      this._updateAgentMetrics(agentType, 'failed', 0, duration);
+      this._updateAgentMetrics(
+        agentType,
+        'failed',
+        0,
+        duration,
+        Number(error?.retry_attempts || 0),
+      );
 
       throw this._normalizeError(error, agentType, task.id);
     } finally {
@@ -155,9 +167,38 @@ export class AgentDispatcher {
       ) {
         await agentInstance.cleanup();
       }
-      this.activeTasks--;
+      this.activeTasks = Math.max(0, this.activeTasks - 1);
       this._processQueue();
     }
+  }
+
+  async _executeWithRetry(executor, agentType, taskId) {
+    const retries = Math.max(0, this.config.max_retries || 0);
+    const retryDelay = Math.max(0, this.config.retry_delay || 0);
+
+    let lastError = null;
+    let retryAttempts = 0;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await executor();
+        return { result, retryAttempts };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= retries) {
+          break;
+        }
+        retryAttempts++;
+        console.warn(
+          `[${agentType}] Task ${taskId} failed on attempt ${attempt + 1}, retrying in ${retryDelay}ms`,
+        );
+        await this._delay(retryDelay);
+      }
+    }
+
+    if (lastError && typeof lastError === 'object') {
+      lastError.retry_attempts = retryAttempts;
+    }
+    throw lastError || new Error(`[${agentType}] Task ${taskId} failed after retries`);
   }
 
   /**
@@ -209,22 +250,7 @@ export class AgentDispatcher {
     const tasks = task.tasks || [];
 
     const promises = tasks.map((t) => {
-      const enrichedTask = this._enrichTask(t, 'native-coder');
-      const agentInstance = factory();
-      return this._executeWithTimeout(
-        agentInstance.execute(enrichedTask),
-        this.config.request_timeout,
-        'native-coder',
-        t.id,
-      ).finally(async () => {
-        if (
-          agentInstance &&
-          typeof agentInstance.cleanup === 'function' &&
-          agentInstance !== this.agents.get('native-coder')
-        ) {
-          await agentInstance.cleanup();
-        }
-      });
+      return this._runParallelCodingTask(factory, t);
     });
 
     const results = await Promise.allSettled(promises);
@@ -238,6 +264,59 @@ export class AgentDispatcher {
           : { status: 'failed', error: r.reason?.message || r.reason }),
       })),
     };
+  }
+
+  async _runParallelCodingTask(factory, task) {
+    const enrichedTask = this._enrichTask(task, 'native-coder');
+    let agentInstance = null;
+    const startTime = Date.now();
+
+    try {
+      await this._waitForSlot();
+      this.activeTasks++;
+      this._updateAgentMetrics('native-coder', 'start');
+
+      agentInstance = factory();
+      if (agentInstance && typeof agentInstance.setPermissionClassifier === 'function') {
+        agentInstance.setPermissionClassifier(this.permissionClassifier);
+      }
+
+      const { result, retryAttempts } = await this._executeWithRetry(
+        () =>
+          this._executeWithTimeout(
+            agentInstance.execute(enrichedTask),
+            this.config.request_timeout,
+            'native-coder',
+            task.id,
+          ),
+        'native-coder',
+        task.id,
+      );
+
+      const duration = Date.now() - startTime;
+      this._updateAgentMetrics('native-coder', 'success', 0, duration, retryAttempts);
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this._updateAgentMetrics(
+        'native-coder',
+        'failed',
+        0,
+        duration,
+        Number(error?.retry_attempts || 0),
+      );
+      throw this._normalizeError(error, 'native-coder', task.id);
+    } finally {
+      if (
+        agentInstance &&
+        typeof agentInstance.cleanup === 'function' &&
+        agentInstance !== this.agents.get('native-coder')
+      ) {
+        await agentInstance.cleanup();
+      }
+      this.activeTasks = Math.max(0, this.activeTasks - 1);
+      this._processQueue();
+    }
   }
 
   /**
@@ -297,8 +376,19 @@ export class AgentDispatcher {
   }
 
   async _waitForSlot() {
-    while (this.activeTasks >= this.config.max_concurrent) {
-      await this._delay(100);
+    if (this.activeTasks < this.config.max_concurrent) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      this.taskQueue.push(resolve);
+    });
+  }
+
+  _wakeQueuedTask() {
+    const next = this.taskQueue.shift();
+    if (typeof next === 'function') {
+      next();
     }
   }
 
@@ -307,11 +397,11 @@ export class AgentDispatcher {
   }
 
   _processQueue() {
-    if (this.config.enable_queue && this.taskQueue.length > 0) {
-      const nextTask = this.taskQueue.shift();
-      this.dispatch(nextTask).catch((err) => {
-        console.error(`Queue task ${nextTask.id} failed:`, err.message);
-      });
+    if (!this.config.enable_queue) {
+      return;
+    }
+    while (this.taskQueue.length > 0 && this.activeTasks < this.config.max_concurrent) {
+      this._wakeQueuedTask();
     }
   }
 
@@ -319,7 +409,7 @@ export class AgentDispatcher {
    * 更新 Agent 指标
    * @private
    */
-  _updateAgentMetrics(agentType, event, tokens = 0, duration = 0) {
+  _updateAgentMetrics(agentType, event, tokens = 0, duration = 0, retryAttempts = 0) {
     const metrics = this.taskMetrics.get(agentType);
     if (!metrics) return;
 
@@ -331,10 +421,18 @@ export class AgentDispatcher {
     if (event === 'success') {
       metrics.successTasks++;
       metrics.totalTokens += tokens;
+      metrics.retryAttempts += retryAttempts;
+      if (retryAttempts > 0) {
+        metrics.retriedTasks++;
+      }
       metrics.avgDuration =
         (metrics.avgDuration * (metrics.successTasks - 1) + duration) / metrics.successTasks;
     } else if (event === 'failed') {
       metrics.failedTasks++;
+      metrics.retryAttempts += retryAttempts;
+      if (retryAttempts > 0) {
+        metrics.retriedTasks++;
+      }
     }
   }
 

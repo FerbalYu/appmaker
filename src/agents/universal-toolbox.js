@@ -81,7 +81,7 @@ export const TOOL_CATEGORIES = {
 
 async function searchInDir(dir, pattern, filePattern, caseSensitive, results, workspaceRoot) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  const regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+  const regex = new RegExp(pattern, caseSensitive ? '' : 'i');
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
@@ -212,6 +212,55 @@ export class UniversalToolbox {
     return metadata;
   }
 
+  _isTypeMatch(value, type) {
+    if (type === 'array') return Array.isArray(value);
+    if (type === 'object') return value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (type === 'string') return typeof value === 'string';
+    if (type === 'number') return typeof value === 'number' && Number.isFinite(value);
+    if (type === 'boolean') return typeof value === 'boolean';
+    return true;
+  }
+
+  _validateToolArgs(toolName, args, inputSchema) {
+    if (!inputSchema || inputSchema.type !== 'object') {
+      return { valid: true };
+    }
+
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      return {
+        valid: false,
+        reason: `Invalid arguments for ${toolName}: expected an object`,
+        code: 'INVALID_TOOL_ARGS',
+      };
+    }
+
+    const required = Array.isArray(inputSchema.required) ? inputSchema.required : [];
+    for (const field of required) {
+      if (args[field] === undefined) {
+        return {
+          valid: false,
+          reason: `Missing required argument: ${field}`,
+          code: 'INVALID_TOOL_ARGS',
+        };
+      }
+    }
+
+    const properties = inputSchema.properties || {};
+    for (const [key, value] of Object.entries(args)) {
+      const fieldSchema = properties[key];
+      if (!fieldSchema || !fieldSchema.type) continue;
+      if (!this._isTypeMatch(value, fieldSchema.type)) {
+        return {
+          valid: false,
+          reason: `Invalid argument type for ${key}: expected ${fieldSchema.type}`,
+          code: 'INVALID_TOOL_ARGS',
+        };
+      }
+    }
+
+    return { valid: true };
+  }
+
   async execute(toolName, args = {}) {
     const tool = this.tools.get(toolName);
     if (!tool) {
@@ -219,12 +268,31 @@ export class UniversalToolbox {
         success: false,
         tool: toolName,
         error: `Tool not found: ${toolName}`,
+        error_info: {
+          code: 'TOOL_NOT_FOUND',
+          type: 'tool_lookup_error',
+          message: `Tool not found: ${toolName}`,
+        },
         duration_ms: 0,
       };
     }
 
     const startTime = Date.now();
     try {
+      const validation = this._validateToolArgs(toolName, args, tool.inputSchema);
+      if (!validation.valid) {
+        return {
+          success: false,
+          tool: toolName,
+          error: validation.reason,
+          error_info: {
+            code: validation.code,
+            type: 'validation_error',
+            message: validation.reason,
+          },
+          duration_ms: Date.now() - startTime,
+        };
+      }
       const result = await tool.handler(args, this.config);
       return {
         success: true,
@@ -237,6 +305,11 @@ export class UniversalToolbox {
         success: false,
         tool: toolName,
         error: error.message,
+        error_info: {
+          code: 'TOOL_EXECUTION_FAILED',
+          type: error?.name || 'Error',
+          message: error?.message || String(error),
+        },
         duration_ms: Date.now() - startTime,
       };
     }

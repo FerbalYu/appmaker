@@ -120,12 +120,29 @@ describe('UniversalToolbox', () => {
     
     expect(result.success).toBe(false);
     expect(result.error).toContain('not found');
+    expect(result.error_info.code).toBe('TOOL_NOT_FOUND');
   });
 
   test('should block workspace escape path', async () => {
     const result = await toolbox.execute('read_file', { file_path: '../package.json' });
     expect(result.success).toBe(false);
     expect(result.error).toContain('escapes workspace');
+    expect(result.error_info.code).toBe('TOOL_EXECUTION_FAILED');
+  });
+
+  test('should reject invalid argument types with structured validation error', async () => {
+    const result = await toolbox.execute('file_exists', { path: 123 });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Invalid argument type for path');
+    expect(result.error_info.code).toBe('INVALID_TOOL_ARGS');
+    expect(result.error_info.type).toBe('validation_error');
+  });
+
+  test('should reject missing required arguments with structured validation error', async () => {
+    const result = await toolbox.execute('read_file', {});
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Missing required argument');
+    expect(result.error_info.code).toBe('INVALID_TOOL_ARGS');
   });
 });
 

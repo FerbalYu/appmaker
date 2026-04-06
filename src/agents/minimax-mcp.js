@@ -6,7 +6,6 @@
  */
 
 import { AgentAdapter } from './base.js';
-import { jsonrepair } from 'jsonrepair';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -133,15 +132,12 @@ export class MinimaxMCPAdapter extends AgentAdapter {
           payload.extra_body = { reasoning_split: true };
         }
 
-        const res = await fetch(`${this.apiHost}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(600000),
-        });
+        const res = await this._requestCompletion(
+          `${this.apiHost}/v1/chat/completions`,
+          payload,
+          task.context?.abortController?.signal || task.context?.abortSignal,
+          600000,
+        );
 
         if (!res.ok) {
           const errText = await res.text();
@@ -255,72 +251,6 @@ export class MinimaxMCPAdapter extends AgentAdapter {
         } catch {
           /* ignore */
         }
-      }
-    }
-  }
-
-  _extractJSON(output) {
-    if (typeof output !== 'string') return output;
-
-    // Capture <think> block and emit to telemetry before stripping
-    const thinkMatch = output.match(/<think>([\s\S]*?)<\/think>/i);
-    if (thinkMatch && typeof this.emit === 'function') {
-      this.emit('action', { type: 'think', content: thinkMatch[1].trim() });
-    }
-
-    // Strip <think>...</think> reasoning tags which corrupt JSON matching
-    output = output.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-    for (const match of codeBlocks) {
-      const extracted = match[1].trim();
-      if (this._isValidJSON(extracted)) {
-        return this._repairIfNeeded(extracted);
-      }
-    }
-
-    const startObj = output.indexOf('{');
-    const endObj = output.lastIndexOf('}');
-    if (startObj !== -1 && endObj !== -1 && endObj > startObj) {
-      const candidate = output.substring(startObj, endObj + 1);
-      if (this._isValidJSON(candidate)) {
-        return this._repairIfNeeded(candidate);
-      }
-    }
-
-    try {
-      if (this._isValidJSON(output)) {
-        return this._repairIfNeeded(output);
-      }
-    } catch (_) {
-      /* ignore validation errors */
-    }
-
-    return null;
-  }
-
-  _repairIfNeeded(str) {
-    try {
-      JSON.parse(str);
-      return str;
-    } catch {
-      return jsonrepair(str);
-    }
-  }
-
-  _isValidJSON(str) {
-    if (!str || typeof str !== 'string') return false;
-    const trimmed = str.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
-    try {
-      JSON.parse(trimmed);
-      return true;
-    } catch {
-      try {
-        JSON.parse(jsonrepair(trimmed));
-        return true;
-      } catch {
-        return false;
       }
     }
   }
