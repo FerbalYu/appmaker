@@ -592,8 +592,82 @@ describe('ExecutionEngine', () => {
   it('should expose goal invariant in task execution context', async () => {
     const engine = new ExecutionEngine({ project_root: process.cwd() });
     engine.goalInvariant = { summary: '目标A: 保持认证能力稳定' };
-    const context = await engine._buildContext({ id: 't_ctx' }, { project: { name: 'p' } });
+    const context = await engine._buildContext(
+      {
+        id: 't_ctx',
+        execution_mode: 'probe_replan',
+        replan_plan: { strategy: 'probe_driven_replan' },
+      },
+      { project: { name: 'p' } },
+      {
+        preflight: {
+          already_satisfied: false,
+          missing_artifacts: ['src/index.js'],
+        },
+      },
+    );
     expect(context.goal_invariant).toContain('目标A');
+    expect(context.execution_mode).toBe('probe_replan');
+    expect(context.replan_plan?.strategy).toBe('probe_driven_replan');
+    expect(context.state_probe_preflight?.missing_artifacts?.[0]).toBe('src/index.js');
+  });
+
+  it('should aggregate state probe summary counters for probe_replan tasks', async () => {
+    const engine = new ExecutionEngine({
+      project_root: process.cwd(),
+      state_probe: { enabled: true },
+      max_concurrent_tasks: 1,
+    });
+    engine.stateProbe.evaluateTaskState = async (task) => ({
+      already_satisfied: false,
+      required_artifacts: ['src/index.js'],
+      missing_artifacts: task.id === 't1' ? ['src/index.js'] : [],
+      reason: 'missing_required_artifacts',
+    });
+    engine.dispatcher.registerAgent('native-coder', () => ({
+      name: 'native-coder',
+      execute: async (task) => ({
+        task_id: task.id,
+        success: true,
+        status: 'success',
+        output: { files_created: ['src/index.js'], files_modified: [] },
+      }),
+      setPermissionClassifier: () => {},
+    }));
+    engine.dispatcher.registerAgent('native-reviewer', () => ({
+      name: 'native-reviewer',
+      execute: async (task) => ({
+        task_id: `review_${task.id}`,
+        success: true,
+        status: 'success',
+        output: { score: 90, issues: [], summary: 'OK' },
+      }),
+      setPermissionClassifier: () => {},
+    }));
+
+    const plan = {
+      plan_id: 'probe_stats',
+      project: { name: 'Probe Stats' },
+      tasks: [
+        {
+          id: 't1',
+          description: 'probe replan task',
+          type: 'modify',
+          execution_mode: 'probe_replan',
+          replan_plan: { strategy: 'rainmaker_probe_replan' },
+          dependencies: [],
+        },
+      ],
+      milestones: [{ id: 'm1', name: 'm1', tasks: ['t1'] }],
+    };
+
+    const result = await engine.execute(plan);
+    expect(result.summary.state_probe.preflight_checks).toBeGreaterThanOrEqual(1);
+    expect(result.summary.state_probe.probe_replan_tasks).toBe(1);
+    expect(result.summary.state_probe.probe_replan_completed).toBe(1);
+    expect(result.summary.state_probe.missing_artifact_hits).toBeGreaterThanOrEqual(1);
+    expect(result.results[0].execution_mode).toBe('probe_replan');
+    expect(result.results[0].replan_plan?.strategy).toBe('rainmaker_probe_replan');
   });
 
   it('should trigger forced goal replan after consecutive goal-drift critical issues', async () => {

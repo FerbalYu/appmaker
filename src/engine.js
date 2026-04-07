@@ -111,6 +111,14 @@ export class ExecutionEngine extends EventEmitter {
       replanned_tasks: 0,
       decisions: [],
     };
+    this.probeStats = {
+      preflight_checks: 0,
+      already_satisfied_skips: 0,
+      missing_artifact_hits: 0,
+      probe_replan_tasks: 0,
+      probe_replan_completed: 0,
+      probe_replan_failed: 0,
+    };
     this.goalInvariant = null;
     this.halt = false;
     this.aborted = false;
@@ -478,10 +486,18 @@ export class ExecutionEngine extends EventEmitter {
     if (!task.goal && this.goalInvariant?.summary) {
       task.goal = this.goalInvariant.summary;
     }
+    const isProbeReplanTask = String(task.execution_mode || '') === 'probe_replan';
+    if (isProbeReplanTask) {
+      this.probeStats.probe_replan_tasks += 1;
+    }
 
-    const context = await this._buildContext(task, plan);
     const preflight = await this.stateProbe.evaluateTaskState(task, this.projectRoot);
+    this.probeStats.preflight_checks += 1;
+    if ((preflight?.missing_artifacts || []).length > 0) {
+      this.probeStats.missing_artifact_hits += 1;
+    }
     if (preflight.already_satisfied) {
+      this.probeStats.already_satisfied_skips += 1;
       this._log(
         'INFO',
         `[${task.id}] 🧭 状态探针判定任务已满足，跳过重复执行 (${preflight.required_artifacts.join(', ')})`,
@@ -504,6 +520,7 @@ export class ExecutionEngine extends EventEmitter {
       this.emit('task:done', { task, result: skipResult });
       return skipResult;
     }
+    const context = await this._buildContext(task, plan, { preflight });
     let codeResult;
     let reviewResult;
     let cycle = 0;
@@ -529,6 +546,9 @@ export class ExecutionEngine extends EventEmitter {
     );
 
     if (!codeResult || codeResult.status === 'failed' || codeResult.success === false) {
+      if (isProbeReplanTask) {
+        this.probeStats.probe_replan_failed += 1;
+      }
       const errorMsg = codeResult?.error || codeResult?.errors || 'Unknown error';
       this._log('ERROR', `[${task.id}] ❌ native-coder 执行失败: ${errorMsg}`);
       const errRes = { task_id: task.id, status: 'failed', phase: 'code', error: errorMsg };
@@ -933,7 +953,13 @@ export class ExecutionEngine extends EventEmitter {
         critical_clearance_time: criticalClearanceTime,
         repeat_issue_rate: lastRepeatIssueRate,
       },
+      execution_mode: task.execution_mode || null,
+      replan_plan: task.replan_plan || null,
+      probe: preflight,
     };
+    if (isProbeReplanTask) {
+      this.probeStats.probe_replan_completed += 1;
+    }
     this.emit('task:done', { task, result: finalResult });
     return finalResult;
   }
@@ -1359,11 +1385,15 @@ ${reviewComments || '无'}
     }
   }
 
-  async _buildContext(task, plan) {
+  async _buildContext(task, plan, options = {}) {
+    const preflight = options.preflight || null;
     return {
       task_id: task.id,
       project_root: this.projectRoot,
       goal_invariant: this.goalInvariant?.summary || '',
+      execution_mode: task.execution_mode || null,
+      replan_plan: task.replan_plan || null,
+      state_probe_preflight: preflight,
       architecture_rules: await this._loadRule('architecture'),
       quality_rules: await this._loadRule('quality'),
       checkpoint: this.checkpoints[this.checkpoints.length - 1],
@@ -1798,6 +1828,14 @@ ${issueLines || '- 按评审意见进行小范围补丁修复'}
       recovered_tasks: this.recoveryStats.recovered_tasks,
       replanned_tasks: this.recoveryStats.replanned_tasks,
       decisions_tail: this.recoveryStats.decisions.slice(-10),
+    };
+    summary.state_probe = {
+      preflight_checks: this.probeStats.preflight_checks,
+      already_satisfied_skips: this.probeStats.already_satisfied_skips,
+      missing_artifact_hits: this.probeStats.missing_artifact_hits,
+      probe_replan_tasks: this.probeStats.probe_replan_tasks,
+      probe_replan_completed: this.probeStats.probe_replan_completed,
+      probe_replan_failed: this.probeStats.probe_replan_failed,
     };
     return summary;
   }

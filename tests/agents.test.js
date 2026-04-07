@@ -4,6 +4,7 @@ import { NativeReviewerAdapter } from '../src/agents/native-reviewer.js';
 import { MinimaxMCPAdapter } from '../src/agents/minimax-mcp.js';
 import { AssetScoutAdapter } from '../src/agents/asset-scout.js';
 import { RainmakerAdapter } from '../src/agents/rainmaker.js';
+import { MultiAgentThinker } from '../src/thinker.js';
 import { ReviewInputGate } from '../src/review/review-input-gate.js';
 import { ReviewerOutputParser } from '../src/review/reviewer-output-parser.js';
 import { REVIEW_ERROR_CODES } from '../src/review/error-codes.js';
@@ -734,5 +735,58 @@ describe('Agents & Dispatcher', () => {
     expect(mcp._extractJSON(input)).toEqual({ ok: true, n: 1 });
     expect(scout._extractJSON(input)).toEqual({ ok: true, n: 1 });
     expect(rainmaker._extractJSON(input)).toEqual({ ok: true, n: 1 });
+  });
+
+  it('should run rainmaker in state-probe-replan mode before final planning', async () => {
+    const thinkerSpy = jest
+      .spyOn(MultiAgentThinker.prototype, '_callAgent')
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          project: { name: 'rainmaker_probe_project', description: 'draft' },
+          features: ['runability'],
+          tasks: [{ id: 't1', type: 'modify', description: '补齐启动链路', files: ['src/index.js'] }],
+          milestones: [{ id: 'm1', name: '可运行性', tasks: ['t1'] }],
+          audit: { summary: 'draft audit', findings: [] },
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          project: { name: 'rainmaker_probe_project', description: 'replanned' },
+          features: ['runability', 'pitfall'],
+          tasks: [{ id: 't1', type: 'modify', description: '先补齐缺失工件并修复启动链路' }],
+          milestones: [{ id: 'm1', name: '先补洞后推进', tasks: ['t1'] }],
+          audit: { summary: 'replanned audit', findings: [] },
+        }),
+      );
+
+    const rainmaker = new RainmakerAdapter({ api_key: 'test-key' });
+    rainmaker.getProjectContext = async () => ({ structure: 'mock structure' });
+    rainmaker.stateProbe.collectProjectState = async () => ({
+      captured_at: '2026-01-01T00:00:00.000Z',
+      files: ['README.md'],
+      directories: ['src'],
+    });
+    rainmaker.stateProbe.evaluateTaskState = async () => ({
+      already_satisfied: false,
+      reason: 'missing_required_artifacts',
+      missing_artifacts: ['src/index.js'],
+      required_artifacts: ['src/index.js'],
+    });
+
+    const result = await rainmaker.execute({
+      id: 'rainmaker_probe',
+      description: '先状态探针重订计划',
+      context: { project_root: '.' },
+    });
+
+    expect(thinkerSpy).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('success');
+    expect(result.output.probe?.mode).toBe('state_probe_replan');
+    expect(result.output.planning_stages?.probe_replanned).toBe(true);
+    expect(result.output.plan.tasks[0].execution_mode).toBe('probe_replan');
+    expect(result.output.plan.tasks[0].replan_plan?.strategy).toBe('rainmaker_probe_replan');
+    expect(result.output.plan.probe?.project_state?.top_level_files).toBe(1);
+
+    thinkerSpy.mockRestore();
   });
 });

@@ -284,6 +284,8 @@ export class Planner {
         description: fallbackRequirement,
         context: {
           project_root: this.projectRoot,
+          requirement: fallbackRequirement,
+          planning_mode: 'state_probe_replan',
         },
       });
 
@@ -305,6 +307,13 @@ export class Planner {
       }
       if (rawPlan?.features && Array.isArray(rawPlan.features)) {
         finalizedPlan.features = this._validateFeatures(rawPlan.features);
+      }
+      if (rawPlan?.probe) {
+        finalizedPlan.probe = rawPlan.probe;
+        finalizedPlan.metadata.rainmaker_probe = rawPlan.probe;
+      }
+      if (result?.output?.planning_stages) {
+        finalizedPlan.metadata.rainmaker_planning_stages = result.output.planning_stages;
       }
 
       console.log(
@@ -582,6 +591,11 @@ ${requirement}
       estimated_tokens: task.estimated_tokens || 2000,
       estimated_minutes: task.estimated_minutes || 10,
       files: Array.isArray(task.files) ? task.files : [],
+      subtasks: Array.isArray(task.subtasks) ? task.subtasks : [],
+      goal: typeof task.goal === 'string' ? task.goal : '',
+      execution_mode: typeof task.execution_mode === 'string' ? task.execution_mode : '',
+      replan_plan:
+        task.replan_plan && typeof task.replan_plan === 'object' ? task.replan_plan : null,
     }));
   }
 

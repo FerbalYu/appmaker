@@ -87,4 +87,49 @@ describe('Planner', () => {
     expect(plan.project.name).toBe('rainmaker_project');
     expect(plan.tasks.length).toBe(3);
   });
+
+  it('keeps rainmaker probe-replan metadata and extended task fields', async () => {
+    planner.dispatcher.dispatch.mockResolvedValueOnce({
+      output: {
+        plan: {
+          project: { name: 'rainmaker_probe_project', description: 'probe replanned' },
+          features: ['runability', 'pitfall'],
+          tasks: [
+            {
+              id: 't1',
+              type: 'modify',
+              description: '补齐缺失工件并恢复主流程',
+              dependencies: [],
+              execution_mode: 'probe_replan',
+              goal: '保持业务目标不变',
+              subtasks: ['状态探针', '补洞', '回归目标'],
+              replan_plan: {
+                strategy: 'rainmaker_probe_replan',
+                missing_artifacts: ['src/index.js']
+              }
+            }
+          ],
+          milestones: [{ id: 'm1', name: '先状态后重订', tasks: ['t1'] }],
+          probe: {
+            mode: 'state_probe_replan',
+            project_state: { top_level_files: 3, top_level_directories: 2 },
+            decisions: [{ task_id: 't1', action: 'probe_replan' }]
+          }
+        },
+        planning_stages: {
+          draft_generated: true,
+          probe_replanned: true
+        }
+      }
+    });
+
+    const plan = await planner.planByRainmaker({ requirement: '先状态探针重订计划' });
+
+    expect(plan.probe?.mode).toBe('state_probe_replan');
+    expect(plan.metadata.rainmaker_probe?.project_state?.top_level_files).toBe(3);
+    expect(plan.metadata.rainmaker_planning_stages?.probe_replanned).toBe(true);
+    expect(plan.tasks[0].execution_mode).toBe('probe_replan');
+    expect(plan.tasks[0].replan_plan?.strategy).toBe('rainmaker_probe_replan');
+    expect(plan.tasks[0].subtasks.length).toBeGreaterThan(0);
+  });
 });
