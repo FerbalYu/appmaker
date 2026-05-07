@@ -152,23 +152,24 @@ export class Planner {
     let enhancedRequirement = requirement;
 
     console.log(`[Planner] 🤖 4-Agent 专家联合深度需求分析中...`);
+    let thinkResult = null;
     try {
       if (this.config.globalBus) {
         this.config.globalBus.emit('think:start', { requirement });
       }
 
       const thinker = new MultiAgentThinker({ verbose: true });
-      const thought = await thinker.think(requirement, (msg) => {
+      thinkResult = await thinker.thinkForPlanning(requirement, (msg) => {
         if (this.config.globalBus) {
           this.config.globalBus.emit('think:message', { role: 'System', content: msg });
         }
       });
-      enhancedRequirement = `【原始需求】\n${requirement}\n\n【4-Agent 专家团队深度解析】\n${thought}`;
+      enhancedRequirement = `【原始需求】\n${requirement}\n\n【4-Agent 专家团队深度解析】\n核心需求: ${thinkResult.core_requirement}\n技术路线: ${thinkResult.technical_approach}\n风险: ${thinkResult.risks.join('；')}\n替代方案: ${thinkResult.creative_alternatives.join('；')}\n待确认问题: ${thinkResult.open_questions.join('；')}\n讨论摘要: ${thinkResult.analysis_summary}`;
     } catch (err) {
       console.log(`[Planner] ⚠️ 4-Agent 思考模式发生降级 (${err.message})`);
     } finally {
       if (this.config.globalBus) {
-        this.config.globalBus.emit('plan:start', { requirement: enhancedRequirement });
+        this.config.globalBus.emit('plan:start', { requirement: enhancedRequirement, think: thinkResult });
       }
     }
 

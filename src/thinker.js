@@ -138,10 +138,9 @@ export class MultiAgentThinker {
       creative: `你是一个「创意人员 (Creative)」。负责发散思维，探索非传统的观点，使用生动、活泼且易懂的语气。请大胆假设、跳出框架，让答案更有趣、更具启发性。`,
       captain: `你是一个团队的「总指挥 (Captain)」。你的团队（研究员、逻辑学家、创意人员）刚刚针对用户问题进行了激烈的讨论。
 你的职责：
-1. 整合他们所有的有效观点。
-2. 解决他们意见中的冲突。
-3. 输出一个风格统一、逻辑连贯、阅读体验极佳的最终解答。
-4. 【重要】你的输出直接面向最终用户，请直接回答问题，不要加入"我的团队认为"、"综合以上观点"等开场白，请展现出一位权威专家的气度。`,
+1. 找出三个角色达成共识的关键点。
+2. 标出他们之间的分歧，给出你的裁定和理由。
+3. 基于以上分析，输出一个逻辑连贯的最终解答，读者应能分辨哪些结论来自哪个角色的贡献。`,
     };
 
     log('启动第一阶段：并行独立发想...');
@@ -196,5 +195,99 @@ export class MultiAgentThinker {
     log('思考完毕，成功产出最终答案。');
 
     return finalAnswer;
+  }
+
+  async thinkForPlanning(requirement, onProgress) {
+    const log = (msg) => {
+      if (onProgress) onProgress(msg);
+    };
+
+    const sysPrompts = {
+      researcher: `你是一个「研究员 (Fact-Checker)」。负责提供准确、客观的事实基础、数据或外部知识。请严格审视信息，如果不确定请坦白。字数精简，只讲重点。`,
+      logician: `你是一个「逻辑学家 (Logician)」。负责严格审查逻辑链条，做逐步推理（step-by-step），找出可能的矛盾、边界情况与跳跃性结论。专注于严谨、无懈可击的推断。字数精简，直指核心。`,
+      creative: `你是一个「创意人员 (Creative)」。负责发散思维，探索非传统的观点，使用生动、活泼且易懂的语气。请大胆假设、跳出框架，让答案更有趣、更具启发性。`,
+      captain: `你是一个团队的「总指挥 (Captain)」。你的团队刚刚讨论了用户提出的软件需求。
+职责：
+1. 找出三个角色达成共识的关键点。
+2. 标出分歧并裁决。
+3. 输出一份**严格合法的 JSON**，供下游 Planner 使用。
+
+【输出 JSON Schema，必须严格遵守】
+{
+  "core_requirement": "一句话概括核心需求",
+  "risks": ["风险1", "风险2"],
+  "technical_approach": "推荐的技术路线（2-3句话）",
+  "creative_alternatives": ["替代方案1", "替代方案2"],
+  "open_questions": ["待确认问题1", "待确认问题2"],
+  "analysis_summary": "团队讨论摘要（包含共识和分歧要点，3-5句）"
+}
+
+只输出 JSON，不含 Markdown 包裹，不含任何其他文字。`,
+    };
+
+    log('thinkForPlanning 启动第一阶段：并行独立发想...');
+
+    const round1Prompt = `用户提出了一个软件需求：\n"""\n${requirement}\n"""\n请基于你的角色给出初步解答。`;
+
+    const [r1_researcher, r1_logician, r1_creative] = await Promise.all([
+      this._callAgent('Researcher', sysPrompts.researcher, round1Prompt, 0.2),
+      this._callAgent('Logician', sysPrompts.logician, round1Prompt, 0.2),
+      this._callAgent('Creative', sysPrompts.creative, round1Prompt, 0.7),
+    ]);
+
+    if (this.verbose) {
+      log(`\n--- 🕵️ 研究员 初稿 ---\n${r1_researcher}`);
+      log(`\n--- 🧠 逻辑学家 初稿 ---\n${r1_logician}`);
+      log(`\n--- 🎨 创意人员 初稿 ---\n${r1_creative}\n`);
+    }
+
+    log('thinkForPlanning 启动第二阶段：交叉辩论...');
+
+    const ctx = `【团队其他成员的初稿】\n\n[研究员的观点]:\n${r1_researcher}\n\n[逻辑学家的观点]:\n${r1_logician}\n\n[创意人员的观点]:\n${r1_creative}`;
+
+    const debatePrompt = `原需求：\n${requirement}\n\n${ctx}\n\n请基于你的角色特点，阅读其他人的观点后进行反驳、纠正错误、补充盲区。字数精简。`;
+
+    const [r2_researcher, r2_logician, r2_creative] = await Promise.all([
+      this._callAgent('Researcher', sysPrompts.researcher, debatePrompt, 0.3),
+      this._callAgent('Logician', sysPrompts.logician, debatePrompt, 0.3),
+      this._callAgent('Creative', sysPrompts.creative, debatePrompt, 0.7),
+    ]);
+
+    if (this.verbose) {
+      log(`\n--- 🕵️ 研究员 辩论 ---\n${r2_researcher}`);
+      log(`\n--- 🧠 逻辑学家 辩论 ---\n${r2_logician}`);
+      log(`\n--- 🎨 创意人员 辩论 ---\n${r2_creative}\n`);
+    }
+
+    log('thinkForPlanning 启动第三阶段：队长结构化总结...');
+
+    const synthesisPrompt = `原需求：\n${requirement}\n\n【第一轮：独立发想】\n[研究员]:\n${r1_researcher}\n[逻辑学家]:\n${r1_logician}\n[创意人员]:\n${r1_creative}\n\n【第二轮：交叉辩论】\n[研究员]:\n${r2_researcher}\n[逻辑学家]:\n${r2_logician}\n[创意人员]:\n${r2_creative}\n\n请作为队长综合所有讨论，输出符合 Schema 的 JSON。`;
+
+    const rawAnswer = await this._callAgent('Captain', sysPrompts.captain, synthesisPrompt, 0.5);
+
+    log('thinkForPlanning 完毕，解析结构化输出...');
+
+    try {
+      const jsonStr = rawAnswer.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const parsed = JSON.parse(jsonStr);
+      return {
+        core_requirement: parsed.core_requirement || requirement,
+        risks: Array.isArray(parsed.risks) ? parsed.risks : [],
+        technical_approach: parsed.technical_approach || '',
+        creative_alternatives: Array.isArray(parsed.creative_alternatives) ? parsed.creative_alternatives : [],
+        open_questions: Array.isArray(parsed.open_questions) ? parsed.open_questions : [],
+        analysis_summary: parsed.analysis_summary || '',
+      };
+    } catch (e) {
+      log(`thinkForPlanning 结构化解析失败 (${e.message})，回退原始文本`);
+      return {
+        core_requirement: requirement,
+        risks: [],
+        technical_approach: '',
+        creative_alternatives: [],
+        open_questions: [],
+        analysis_summary: rawAnswer.substring(0, 500),
+      };
+    }
   }
 }

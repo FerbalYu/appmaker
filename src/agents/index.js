@@ -87,7 +87,14 @@ export async function healthCheck() {
 /**
  * 工厂函数
  */
-export const createEngine = (cfg) => new ExecutionEngine(cfg);
+export function createEngine(cfg = {}) {
+  return new ExecutionEngine({
+    ...(config.engine || {}),
+    review: config.review || {},
+    ...cfg,
+  });
+}
+
 export const createPlanner = (cfg) => new Planner(cfg);
 
 export { ExecutionEngine, Planner, config };

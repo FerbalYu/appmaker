@@ -25,6 +25,23 @@ import { ProjectStateProbe } from './convergence/project-state-probe.js';
 import { RecoveryCoordinator } from './convergence/recovery-coordinator.js';
 import { REVIEW_ERROR_CODES } from './review/error-codes.js';
 import { ReleaseObserver } from './ops/release-observer.js';
+import { normalizeCoderResult, normalizeReviewerResult } from './contracts/agent-result.js';
+import { normalizePlan } from './contracts/plan.js';
+import { buildSummary } from './engine/summary-builder.js';
+import { buildGoalInvariant, buildTaskContext, loadRule } from './engine/context-builder.js';
+import { buildTaskGraph, getAvailableTasks, detectBlockedTasks } from './engine/milestone-scheduler.js';
+import {
+  countCriticalIssues,
+  countGoalDriftCriticalIssues,
+  extractReviewOutcome,
+  buildFixTaskQueue,
+  buildFixPrompt,
+  buildRollbackRefixPrompt,
+  shouldRollbackAndRefix,
+  buildHumanHandoffResult,
+  buildForcedGoalReplanPrompt,
+  hasEffectiveFileChange,
+} from './engine/review-loop-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -167,6 +184,7 @@ export class ExecutionEngine extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async execute(plan) {
+    plan = normalizePlan(plan);
     this._log('INFO', `🚀 开始执行计划: ${plan.project.name}`);
     this._log(
       'INFO',
@@ -260,14 +278,14 @@ export class ExecutionEngine extends EventEmitter {
         return Boolean(t);
       });
 
-    const taskGraph = this._buildTaskGraph(milestoneTasks);
+    const taskGraph = buildTaskGraph(milestoneTasks);
     const maxConcurrent = Math.min(this.config.max_concurrent_tasks, milestoneTasks.length);
 
     const executing = new Map();
     const completed = new Map();
 
     while (completed.size < milestoneTasks.length) {
-      const availableTasks = this._getAvailableTasks(taskGraph, executing, completed);
+      const availableTasks = getAvailableTasks(taskGraph, executing, completed, this.tasks);
 
       if (
         executing.size === 0 &&
@@ -289,41 +307,36 @@ export class ExecutionEngine extends EventEmitter {
             );
             continue;
           }
-          let deadlockCount = 0;
-          const blockedDetails = [];
-          const failedDependencyReasons = new Map();
-          for (const task of blocked) {
+
+          const detection = detectBlockedTasks({
+            graph: taskGraph,
+            completed,
+            executing,
+            tasks: blocked,
+            tasksMap: this.tasks,
+          });
+
+          for (const task of detection.blocked) {
             const deps = task.dependencies || [];
             const failedDeps = deps.filter((depId) => {
               const depRes = completed.get(depId) || this.tasks.get(depId)?.result;
               const st = depRes?.status;
               return st && st !== 'done';
             });
-            const hasFailedDep = failedDeps.length > 0;
-            const errorResult = hasFailedDep
+            const errorResult = failedDeps.length > 0
               ? { task_id: task.id, status: 'blocked', error: '依赖任务失败或未完成' }
               : { task_id: task.id, status: 'deadlock', error: '任务依赖无法满足' };
-            if (errorResult.status === 'deadlock') deadlockCount++;
-            if (hasFailedDep) {
-              blockedDetails.push(`${task.id} <= [${failedDeps.join(', ')}]`);
-              for (const depId of failedDeps) {
-                const depRes = completed.get(depId) || this.tasks.get(depId)?.result;
-                const reason = depRes?.error || depRes?.result?.error || depRes?.phase || depRes?.status;
-                if (!failedDependencyReasons.has(depId)) {
-                  failedDependencyReasons.set(depId, reason || 'unknown');
-                }
-              }
-            }
             results.push(errorResult);
             completed.set(task.id, errorResult);
           }
-          if (deadlockCount > 0) {
-            this._log('ERROR', `检测到死锁！${deadlockCount} 个任务无法完成`);
+
+          if (detection.deadlockCount > 0) {
+            this._log('ERROR', `检测到死锁！${detection.deadlockCount} 个任务无法完成`);
           } else {
-            const detailText = blockedDetails.length > 0 ? ` | ${blockedDetails.join('; ')}` : '';
-            this._log('WARN', `任务阻塞：${blocked.length} 个任务因依赖失败无法继续${detailText}`);
-            if (failedDependencyReasons.size > 0) {
-              const reasonText = [...failedDependencyReasons.entries()]
+            const detailText = detection.blockedDetails.length > 0 ? ` | ${detection.blockedDetails.join('; ')}` : '';
+            this._log('WARN', `任务阻塞：${detection.blocked.length} 个任务因依赖失败无法继续${detailText}`);
+            if (detection.failedDependencyReasons.size > 0) {
+              const reasonText = [...detection.failedDependencyReasons.entries()]
                 .map(([depId, reason]) => `${depId}: ${reason}`)
                 .join('; ');
               this._log('ERROR', `请先修复上游失败任务后重试：${reasonText}`);
@@ -377,51 +390,6 @@ export class ExecutionEngine extends EventEmitter {
 
     await Promise.allSettled(executing.values());
     return results;
-  }
-
-  /**
-   * 构建任务依赖图
-   * @private
-   */
-  _buildTaskGraph(tasks) {
-    const graph = new Map();
-    for (const task of tasks) {
-      graph.set(task.id, {
-        task,
-        dependencies: new Set(task.dependencies || []),
-        dependents: new Set(),
-      });
-    }
-    for (const [id, node] of graph) {
-      for (const depId of node.dependencies) {
-        if (graph.has(depId)) {
-          graph.get(depId).dependents.add(id);
-        }
-      }
-    }
-    return graph;
-  }
-
-  /**
-   * 获取可执行的任务（依赖已满足）
-   * @private
-   */
-  _getAvailableTasks(graph, executing, completed) {
-    const available = [];
-    for (const [id, node] of graph) {
-      if (completed.has(id) || executing.has(id)) continue;
-
-      const depsSatisfied = [...node.dependencies].every(
-        (depId) =>
-          (completed.has(depId) && completed.get(depId)?.status === 'done') ||
-          (this.tasks.has(depId) && this.tasks.get(depId)?.status === 'done'),
-      );
-
-      if (depsSatisfied) {
-        available.push(node.task);
-      }
-    }
-    return available;
   }
 
   /**
@@ -520,7 +488,8 @@ export class ExecutionEngine extends EventEmitter {
       this.emit('task:done', { task, result: skipResult });
       return skipResult;
     }
-    const context = await this._buildContext(task, plan, { preflight });
+    task._preflight = preflight;
+    const context = await this._buildContext(task);
     let codeResult;
     let reviewResult;
     let cycle = 0;
@@ -544,6 +513,8 @@ export class ExecutionEngine extends EventEmitter {
         context,
       },
     );
+
+    codeResult = normalizeCoderResult(codeResult);
 
     if (!codeResult || codeResult.status === 'failed' || codeResult.success === false) {
       if (isProbeReplanTask) {
@@ -614,6 +585,8 @@ export class ExecutionEngine extends EventEmitter {
       },
     );
 
+    reviewResult = normalizeReviewerResult(reviewResult);
+
     this.emit('task:review', { task, result: reviewResult });
 
     if (!reviewResult) {
@@ -621,7 +594,7 @@ export class ExecutionEngine extends EventEmitter {
       return { task_id: task.id, status: 'failed', phase: 'review', error: 'Review agent failed' };
     }
 
-    let reviewOutcome = this._extractReviewOutcome(reviewResult);
+    let reviewOutcome = extractReviewOutcome(reviewResult);
     if (!reviewOutcome.ok) {
       ledger.addRound({
         score: 0,
@@ -639,7 +612,7 @@ export class ExecutionEngine extends EventEmitter {
         stopReason: decision.stop_reason || null,
       });
       if (decision.action === 'handoff') {
-        return this._buildHumanHandoffResult(task, {
+        return buildHumanHandoffResult(task, {
           cycle,
           reviewScore: 0,
           reviewIssues: [],
@@ -661,14 +634,14 @@ export class ExecutionEngine extends EventEmitter {
     let reviewScore = reviewOutcome.score;
     let reviewIssues = reviewOutcome.issues;
     let reviewComments = reviewOutcome.comments;
-    let goalDriftCriticalStreak = this._countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
+    let goalDriftCriticalStreak = countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
     let previousIssues = reviewIssues;
-    const initialCriticalCount = this._countCriticalIssues(reviewIssues);
+    const initialCriticalCount = countCriticalIssues(reviewIssues);
     let criticalClearanceTime = initialCriticalCount === 0 ? 0 : null;
     let lastRepeatIssueRate = 0;
     ledger.addRound({
       score: reviewScore,
-      critical_count: this._countCriticalIssues(reviewIssues),
+      critical_count: countCriticalIssues(reviewIssues),
       issue_count: reviewIssues.length,
       issue_repeat_rate: 0,
       file_change_effective: true,
@@ -682,8 +655,8 @@ export class ExecutionEngine extends EventEmitter {
       this._log('WARN', `[${task.id}] 🔄 评审 FAIL (第 ${cycle} 次修正)`);
       this._logIssues(reviewIssues);
 
-      const fixTaskQueue = this._buildFixTaskQueue(reviewIssues);
-      const fixPrompt = this._buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue);
+      const fixTaskQueue = buildFixTaskQueue(reviewIssues);
+      const fixPrompt = buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue);
       const prevCodeResult = codeResult;
       const filesForRollback = [
         ...(codeResult.output?.files_created || []),
@@ -713,7 +686,9 @@ export class ExecutionEngine extends EventEmitter {
         },
       );
 
-      if (!codeResult) {
+      codeResult = normalizeCoderResult(codeResult);
+
+      if (codeResult.status === 'failed' || codeResult.success === false) {
         this._log('ERROR', `[${task.id}] ❌ 修正失败`);
         return {
           task_id: task.id,
@@ -752,19 +727,14 @@ export class ExecutionEngine extends EventEmitter {
         },
       );
 
-      if (!reviewResult) {
+      reviewResult = normalizeReviewerResult(reviewResult);
+
+      if (reviewResult.status === 'failed' || reviewResult.success === false) {
         this._log('ERROR', `[${task.id}] ❌ 重新评审失败`);
-        return {
-          task_id: task.id,
-          status: 'failed',
-          phase: 're-review',
-          cycle,
-          error: 'Re-review failed',
-        };
       }
 
-      reviewOutcome = this._extractReviewOutcome(reviewResult);
-      const currentGoalDriftCriticalCount = this._countGoalDriftCriticalIssues(reviewOutcome.issues || []);
+      reviewOutcome = extractReviewOutcome(reviewResult);
+      const currentGoalDriftCriticalCount = countGoalDriftCriticalIssues(reviewOutcome.issues || []);
       goalDriftCriticalStreak = currentGoalDriftCriticalCount > 0 ? goalDriftCriticalStreak + 1 : 0;
       if (goalDriftCriticalStreak >= 2) {
         this._log('WARN', `[${task.id}] ⚠️ 检测到连续目标偏航 CRITICAL，触发强制重规划修复`);
@@ -784,14 +754,14 @@ export class ExecutionEngine extends EventEmitter {
           reviewIssues = reviewOutcome.issues || reviewIssues;
           reviewComments = reviewOutcome.comments || reviewComments;
           previousIssues = reviewIssues;
-          goalDriftCriticalStreak = this._countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
+          goalDriftCriticalStreak = countGoalDriftCriticalIssues(reviewIssues) > 0 ? 1 : 0;
           needsFix = reviewScore < REVIEW_THRESHOLD;
           if (!needsFix) {
             this._log('INFO', `[${task.id}] ✅ 强制重规划后通过评审 (${reviewScore})`);
             break;
           }
         } else {
-          return this._buildHumanHandoffResult(task, {
+          return buildHumanHandoffResult(task, {
             cycle,
             reviewScore: reviewOutcome.score || reviewScore || 0,
             reviewIssues: reviewOutcome.issues || reviewIssues,
@@ -801,12 +771,12 @@ export class ExecutionEngine extends EventEmitter {
           });
         }
       }
-      const fileChangeEffective = this._hasEffectiveFileChange(prevCodeResult, codeResult);
+      const fileChangeEffective = hasEffectiveFileChange(prevCodeResult, codeResult);
       const repeatRate = useFingerprint
         ? fingerprintEngine.computeRepeatRate(previousIssues, reviewOutcome.issues || [])
         : 0;
       lastRepeatIssueRate = repeatRate;
-      const currentCriticalCount = this._countCriticalIssues(reviewOutcome.issues || []);
+      const currentCriticalCount = countCriticalIssues(reviewOutcome.issues || []);
       if (criticalClearanceTime === null && initialCriticalCount > 0 && currentCriticalCount === 0) {
         criticalClearanceTime = Date.now() - taskStartAt;
       }
@@ -844,7 +814,7 @@ export class ExecutionEngine extends EventEmitter {
             evidence: decision.evidence || {},
           });
         }
-        return this._buildHumanHandoffResult(task, {
+        return buildHumanHandoffResult(task, {
           cycle,
           reviewScore: reviewOutcome.score || reviewScore || 0,
           reviewIssues: reviewOutcome.issues || reviewIssues,
@@ -872,7 +842,7 @@ export class ExecutionEngine extends EventEmitter {
 
       const newScore = reviewOutcome.score;
       if (
-        this._shouldRollbackAndRefix({
+        shouldRollbackAndRefix({
           previousScore: reviewScore,
           newScore,
           repeatRate,
@@ -881,7 +851,7 @@ export class ExecutionEngine extends EventEmitter {
       ) {
         this._log('WARN', `[${task.id}] 检测到低收益修复，执行局部回滚并二次修复`);
         await this._rollbackFilesFromSnapshot(rollbackSnapshot);
-        const rollbackPrompt = this._buildRollbackRefixPrompt(task, reviewIssues, reviewComments);
+        const rollbackPrompt = buildRollbackRefixPrompt(task, reviewIssues, reviewComments);
         codeResult = await this._executeWithRetry(
           async () =>
             this.dispatcher.dispatch({
@@ -903,6 +873,16 @@ export class ExecutionEngine extends EventEmitter {
             context,
           },
         );
+        codeResult = normalizeCoderResult(codeResult);
+        if (codeResult.status === 'failed' || codeResult.success === false) {
+          return {
+            task_id: task.id,
+            status: 'failed',
+            phase: 'rollback-refix',
+            cycle,
+            error: codeResult.error || 'Rollback refix failed',
+          };
+        }
         await this._attachFileHashes(codeResult);
       }
 
@@ -964,21 +944,6 @@ export class ExecutionEngine extends EventEmitter {
     return finalResult;
   }
 
-  _countGoalDriftCriticalIssues(issues = []) {
-    return (issues || []).filter((issue) => {
-      const severity = String(issue?.severity || '').toUpperCase();
-      if (severity !== 'CRITICAL') return false;
-      const text = `${issue?.title || ''} ${issue?.reason || ''} ${issue?.suggestion || ''}`.toLowerCase();
-      return (
-        text.includes('目标') ||
-        text.includes('goal') ||
-        text.includes('偏离') ||
-        text.includes('drift') ||
-        text.includes('偏航')
-      );
-    }).length;
-  }
-
   async _executeForcedGoalReplan({
     task,
     cycle,
@@ -987,8 +952,8 @@ export class ExecutionEngine extends EventEmitter {
     reviewIssues = [],
     reviewComments = '',
   }) {
-    const forcedPrompt = this._buildForcedGoalReplanPrompt(task, reviewIssues, reviewComments);
-    const forcedCodeResult = await this._executeWithRetry(
+    const forcedPrompt = buildForcedGoalReplanPrompt(task, reviewIssues, reviewComments, this.goalInvariant?.summary || '');
+    let forcedCodeResult = await this._executeWithRetry(
       async () =>
         this.dispatcher.dispatch({
           id: `${task.id}_goal_replan_${cycle}`,
@@ -1009,11 +974,12 @@ export class ExecutionEngine extends EventEmitter {
         context,
       },
     );
-    if (!forcedCodeResult || forcedCodeResult.status === 'failed' || forcedCodeResult.success === false) {
+    forcedCodeResult = normalizeCoderResult(forcedCodeResult);
+    if (forcedCodeResult.status === 'failed' || forcedCodeResult.success === false) {
       return null;
     }
     await this._attachFileHashes(forcedCodeResult);
-    const forcedReviewResult = await this._executeWithRetry(
+    let forcedReviewResult = await this._executeWithRetry(
       async () =>
         this.dispatcher.dispatch({
           id: `review_${task.id}_goal_replan_${cycle}`,
@@ -1038,41 +1004,13 @@ export class ExecutionEngine extends EventEmitter {
         retryByErrorCode: executionConfig.review?.retry_by_error_code !== false,
       },
     );
-    const forcedReviewOutcome = this._extractReviewOutcome(forcedReviewResult);
+    forcedReviewResult = normalizeReviewerResult(forcedReviewResult);
+    const forcedReviewOutcome = extractReviewOutcome(forcedReviewResult);
     return {
       codeResult: forcedCodeResult,
       reviewResult: forcedReviewResult,
       reviewOutcome: forcedReviewOutcome,
     };
-  }
-
-  _buildForcedGoalReplanPrompt(task, reviewIssues = [], reviewComments = '') {
-    const issueLines = (reviewIssues || [])
-      .slice(0, 6)
-      .map(
-        (issue, idx) =>
-          `${idx + 1}. [${issue.severity || 'UNKNOWN'}] ${issue.title || 'unknown'} - ${
-            issue.reason || issue.suggestion || 'no detail'
-          }`,
-      )
-      .join('\n');
-    const goalInvariant = this.goalInvariant?.summary || task.goal || '保持原始业务目标不变';
-    return `[FORCED_GOAL_REPLAN]
-计划可变，目的不可变。你必须先对齐目标，再调整实现路径。
-
-目标不变约束:
-${goalInvariant}
-
-最近评审指出目标偏航问题:
-${issueLines || '- 无结构化 issue，参考评审摘要'}
-
-评审摘要:
-${reviewComments || '无'}
-
-执行要求:
-1. 不得更改最终业务目标
-2. 允许重排实现步骤与文件落点
-3. 输出必须是可审查、可运行的实质修改`;
   }
 
   /**
@@ -1328,16 +1266,6 @@ ${reviewComments || '无'}
     return { feature_flags: featureFlags, review, convergence };
   }
 
-  _shouldRollbackAndRefix({ previousScore, newScore, repeatRate, fileChangeEffective }) {
-    return (
-      Number.isFinite(previousScore) &&
-      Number.isFinite(newScore) &&
-      newScore <= previousScore &&
-      repeatRate >= 0.8 &&
-      fileChangeEffective === false
-    );
-  }
-
   updateFeatureFlags(nextFlags = {}, meta = {}) {
     const previous = { ...(this.config.feature_flags || {}) };
     this.config.feature_flags = {
@@ -1385,19 +1313,22 @@ ${reviewComments || '无'}
     }
   }
 
-  async _buildContext(task, plan, options = {}) {
-    const preflight = options.preflight || null;
-    return {
-      task_id: task.id,
-      project_root: this.projectRoot,
-      goal_invariant: this.goalInvariant?.summary || '',
-      execution_mode: task.execution_mode || null,
-      replan_plan: task.replan_plan || null,
-      state_probe_preflight: preflight,
-      architecture_rules: await this._loadRule('architecture'),
-      quality_rules: await this._loadRule('quality'),
-      checkpoint: this.checkpoints[this.checkpoints.length - 1],
-    };
+  async _buildContext(task) {
+    return buildTaskContext({
+      task,
+      projectRoot: this.projectRoot,
+      goalInvariantSummary: this.goalInvariant?.summary || '',
+      checkpoints: this.checkpoints,
+      loadRuleFn: (name) => loadRule(name, __dirname),
+    });
+  }
+
+  _buildGoalInvariant(plan) {
+    return buildGoalInvariant(plan);
+  }
+
+  async _loadRule(ruleName) {
+    return loadRule(ruleName, __dirname);
   }
 
   async _runStateProbe(plan) {
@@ -1450,75 +1381,6 @@ ${reviewComments || '无'}
     return recoveredCount;
   }
 
-  _buildGoalInvariant(plan) {
-    const project = plan?.project || {};
-    const summary = [project.name, project.description, plan?.requirement]
-      .filter((v) => typeof v === 'string' && v.trim().length > 0)
-      .join(' | ')
-      .substring(0, 240);
-    return {
-      summary: summary || '保持原始业务目标不变',
-      created_at: new Date().toISOString(),
-    };
-  }
-
-  async _loadRule(ruleName) {
-    try {
-      const rulePath = path.join(__dirname, '..', 'rules', `${ruleName}.rules.md`);
-      return await fs.readFile(rulePath, 'utf-8');
-    } catch {
-      return '';
-    }
-  }
-
-  _extractReviewOutcome(reviewResult) {
-    if (!reviewResult) {
-      return { ok: false, error: 'Review result missing', error_code: REVIEW_ERROR_CODES.API_ERROR };
-    }
-    if (reviewResult.status === 'failed' || reviewResult.success === false) {
-      return {
-        ok: false,
-        error:
-          reviewResult.error_readable ||
-          reviewResult.output?.error_readable ||
-          reviewResult.error ||
-          reviewResult.output?.summary ||
-          'Review failed',
-        error_code: reviewResult.error_code || reviewResult.output?.error_code || REVIEW_ERROR_CODES.API_ERROR,
-      };
-    }
-    const score = reviewResult.output?.score;
-    if (typeof score !== 'number') {
-      return {
-        ok: false,
-        error: 'Review output missing score',
-        error_code: REVIEW_ERROR_CODES.INVALID_SCHEMA,
-      };
-    }
-    return {
-      ok: true,
-      score,
-      issues: reviewResult.output?.issues || [],
-      comments: reviewResult.output?.summary || reviewResult.output?.comments || '',
-    };
-  }
-
-  _countCriticalIssues(issues = []) {
-    return (issues || []).filter((issue) => String(issue?.severity || '').toUpperCase() === 'CRITICAL')
-      .length;
-  }
-
-  _buildFixTaskQueue(issues = []) {
-    const severityWeight = { CRITICAL: 3, WARNING: 2, INFO: 1 };
-    return [...(issues || [])]
-      .map((issue) => ({
-        ...issue,
-        _weight: severityWeight[String(issue?.severity || 'INFO').toUpperCase()] || 1,
-      }))
-      .sort((a, b) => b._weight - a._weight)
-      .map(({ _weight, ...rest }) => rest);
-  }
-
   async _attachFileHashes(codeResult) {
     if (!codeResult?.output) {
       return codeResult;
@@ -1551,130 +1413,15 @@ ${reviewComments || '无'}
   }
 
   _hasEffectiveFileChange(previousCodeResult, nextCodeResult) {
-    const before = new Set([
-      ...(previousCodeResult?.output?.files_created || []),
-      ...(previousCodeResult?.output?.files_modified || []),
-    ]);
-    const after = new Set([
-      ...(nextCodeResult?.output?.files_created || []),
-      ...(nextCodeResult?.output?.files_modified || []),
-    ]);
-    if (after.size === 0) {
-      return false;
-    }
-    for (const item of after) {
-      if (!before.has(item)) {
-        return true;
-      }
-    }
-
-    const beforeHashes = previousCodeResult?.output?.file_hashes || {};
-    const afterHashes = nextCodeResult?.output?.file_hashes || {};
-    let comparableCount = 0;
-
-    for (const item of after) {
-      if (!before.has(item)) continue;
-      const beforeHash = beforeHashes[item];
-      const afterHash = afterHashes[item];
-      if (typeof beforeHash === 'string' && typeof afterHash === 'string') {
-        comparableCount += 1;
-        if (beforeHash !== afterHash) {
-          return true;
-        }
-      }
-    }
-
-    if (comparableCount > 0) {
-      return false;
-    }
-    return false;
-  }
-
-  _buildHumanHandoffResult(task, payload) {
-    return {
-      task_id: task.id,
-      status: 'needs_human',
-      phase: 'handoff',
-      stop_reason: payload.stopReason,
-      cycles: payload.cycle || 0,
-      score: payload.reviewScore || 0,
-      issues: payload.reviewIssues || [],
-      comments: payload.reviewComments || '',
-      code_result: payload.codeResult,
-      quality_metrics: payload.qualityMetrics || {},
-      handoff: {
-        stop_reason: payload.stopReason,
-        evidence: payload.evidence || {},
-        last_suggestion: payload.reviewComments || '',
-        actions: ['人工检查关键问题', '确认是否继续自动修复', '必要时调整阈值后重试'],
-      },
-    };
+    return hasEffectiveFileChange(previousCodeResult, nextCodeResult);
   }
 
   _buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue = []) {
-    const issues = reviewResult.output?.issues || [];
-    let issueList;
-
-    if (issues.length > 0 && typeof issues[0] === 'string') {
-      issueList = issues.map((issue, i) => `${i + 1}. [待修复] ${issue}`).join('\n');
-    } else {
-      issueList = issues
-        .map(
-          (issue, i) =>
-            `${i + 1}. [${issue.severity}] ${issue.title}\n   文件: ${issue.file}\n   问题: ${issue.reason}\n   建议: ${issue.suggestion}`,
-        )
-        .join('\n');
-    }
-
-    if (!issueList) {
-      issueList = `评审意见: ${reviewComments || '评分过低 (score < 60)'}`;
-    }
-    const prioritizedFixes =
-      fixTaskQueue.length > 0
-        ? `\n差异化补丁任务队列(按优先级执行，避免全文重写):\n${fixTaskQueue
-            .slice(0, 8)
-            .map(
-              (issue, i) =>
-                `${i + 1}. [${issue.severity || 'INFO'}] 文件:${issue.file || 'unknown'} | 问题:${issue.title || '未命名问题'} | 建议:${issue.suggestion || '按评审意见修复'}`,
-            )
-            .join('\n')}\n`
-        : '';
-
-    return `修正以下代码中的问题：
-
-任务: ${task.description}
-
-需修正的问题:
-${issueList}
-${prioritizedFixes}
-
-${reviewComments ? `评审原话: "${reviewComments}"` : ''}
-
-请根据以上问题修改代码，确保：
-1. 所有 CRITICAL 问题必须修复
-2. 所有 WARNING 问题尽量修复
-3. 保持原有功能不变
-4. 仅提交必要差异，禁止无关文件重写
-
-修改后确保代码通过质量检查。`;
+    return buildFixPrompt(task, codeResult, reviewResult, reviewComments, fixTaskQueue);
   }
 
-  _buildRollbackRefixPrompt(task, issues = [], reviewComments = '') {
-    const issueLines = (issues || [])
-      .slice(0, 6)
-      .map((issue, i) => `${i + 1}. [${issue.severity || 'INFO'}] ${issue.title || '未命名问题'} (${issue.file || 'unknown'})`)
-      .join('\n');
-    return `你上一次修复收益不足，系统已回滚相关文件。请进行更小粒度的二次修复：
-
-任务: ${task.description}
-
-二次修复清单:
-${issueLines || '- 按评审意见进行小范围补丁修复'}
-
-要求：
-1. 仅修改必要行，避免大段重写
-2. 优先解决重复出现的问题
-3. 保持接口与行为兼容`;
+  _shouldRollbackAndRefix(params) {
+    return shouldRollbackAndRefix(params);
   }
 
   _emitAlert(rule, severity = 'warning', details = {}) {
@@ -1723,6 +1470,12 @@ ${issueLines || '- 按评审意见进行小范围补丁修复'}
     const total = this.tasks.size;
     const done = [...this.tasks.values()].filter((t) => t.status === 'done').length;
     const pct = Math.round((done / total) * 100);
+    const ch = this.config._logChannel;
+    if (ch) {
+      ch.info(`[PROGRESS] ${done}/${total} (${pct}%)`);
+      ch.info(`  █${'█'.repeat(Math.floor(pct / 5))}${'░'.repeat(20 - Math.floor(pct / 5))}`);
+      return;
+    }
     console.log(`\n[PROGRESS] ${done}/${total} (${pct}%)`);
     console.log(`  █${'█'.repeat(Math.floor(pct / 5))}${'░'.repeat(20 - Math.floor(pct / 5))}`);
   }
@@ -1753,96 +1506,27 @@ ${issueLines || '- 按评审意见进行小范围补丁修复'}
   }
 
   _generateSummary(results, startTime) {
-    const done = results.filter((r) => r.status === 'done').length;
-    const failedRaw = results.filter((r) => r.status === 'failed').length;
-    const blocked = results.filter((r) => r.status === 'blocked').length;
-    const deadlock = results.filter((r) => r.status === 'deadlock').length;
-    const failed = failedRaw + blocked + deadlock;
-    const needsHuman = results.filter((r) => r.status === 'needs_human').length;
-    const totalCycles = results.reduce((sum, r) => sum + (r.cycles || 0), 0);
-    const avgScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / (results.length || 1);
-    const diminishingAbort = results.filter((r) => r.stop_reason === 'DIMINISHING_RETURNS').length;
-    const successBase = done || 1;
-    const total = results.length || 1;
-
-    const summary = {
-      total: results.length,
-      done,
-      failed,
-      blocked,
-      deadlock,
-      needs_human: needsHuman,
-      total_review_cycles: totalCycles,
-      average_score: Math.round(avgScore),
-      convergence_rate: done / total,
-      avg_cycles: totalCycles / total,
-      diminishing_abort_rate: diminishingAbort / total,
-      tokens_per_success_task: this.tokenUsage.total / successBase,
-      wasted_token_ratio: (failed + needsHuman) / total,
-      duration_ms: Date.now() - startTime,
-    };
-    if (this.abStats.enabled) {
-      summary.ab_test = {
-        mode: this.abStats.mode,
-        total_compares: this.abStats.total_compares,
-        divergence_count: this.abStats.divergence_count,
-        divergence_rate:
-          this.abStats.total_compares > 0
-            ? this.abStats.divergence_count / this.abStats.total_compares
-            : 0,
-        samples: this.abStats.samples,
-      };
-    }
-    const repeatRates = results
-      .map((r) => r.quality_metrics?.repeat_issue_rate)
-      .filter((v) => typeof v === 'number');
-    const clearanceTimes = results
-      .map((r) => r.quality_metrics?.critical_clearance_time)
-      .filter((v) => typeof v === 'number');
-    summary.repeat_issue_rate =
-      repeatRates.length > 0 ? repeatRates.reduce((a, b) => a + b, 0) / repeatRates.length : 0;
-    summary.critical_clearance_time =
-      clearanceTimes.length > 0
-        ? clearanceTimes.reduce((a, b) => a + b, 0) / clearanceTimes.length
-        : null;
-
-    if (this.alerts.length > 0) {
-      summary.alert_count = this.alerts.length;
-      summary.alert_tail = this.alerts.slice(-10);
-      summary.alert_by_rule = this.alerts.reduce((acc, alert) => {
-        acc[alert.rule] = (acc[alert.rule] || 0) + 1;
-        return acc;
-      }, {});
-      summary.alert_by_category = this.alerts.reduce((acc, alert) => {
-        const category = alert.details?.error_category || 'general';
-        acc[category] = (acc[category] || 0) + 1;
-        return acc;
-      }, {});
-    }
-    if (this.featureFlagAudit.length > 0) {
-      summary.feature_flag_audit_count = this.featureFlagAudit.length;
-      summary.feature_flag_audit_tail = this.featureFlagAudit.slice(-5);
-    }
-    summary.recovery = {
-      attempts: this.recoveryStats.attempts,
-      recovered_tasks: this.recoveryStats.recovered_tasks,
-      replanned_tasks: this.recoveryStats.replanned_tasks,
-      decisions_tail: this.recoveryStats.decisions.slice(-10),
-    };
-    summary.state_probe = {
-      preflight_checks: this.probeStats.preflight_checks,
-      already_satisfied_skips: this.probeStats.already_satisfied_skips,
-      missing_artifact_hits: this.probeStats.missing_artifact_hits,
-      probe_replan_tasks: this.probeStats.probe_replan_tasks,
-      probe_replan_completed: this.probeStats.probe_replan_completed,
-      probe_replan_failed: this.probeStats.probe_replan_failed,
-    };
-    return summary;
+    return buildSummary({
+      results,
+      startTime,
+      tokenUsage: this.tokenUsage,
+      abStats: this.abStats,
+      alerts: this.alerts,
+      featureFlagAudit: this.featureFlagAudit,
+      recoveryStats: this.recoveryStats,
+      probeStats: this.probeStats,
+    });
   }
 
   _log(level, message) {
     const entry = { timestamp: new Date().toISOString(), level, message };
     this.logs.push(entry);
+    const ch = this.config._logChannel;
+    if (ch) {
+      const method = level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : 'info';
+      ch[method](message, { type: 'engine_log', timestamp: entry.timestamp });
+      return;
+    }
     if (this.config.observability?.structured_json_logs) {
       console.log(JSON.stringify({ type: 'engine_log', ...entry }));
       return;

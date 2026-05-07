@@ -12,105 +12,53 @@
 
 // Bun 自动加载 .env，无需 dotenv
 
-import { createEngine, healthCheck } from './src/agents/index.js';
 import { Planner } from './src/planner.js';
-import { Supervisor } from './src/supervisor.js';
-import { ProgressMonitor } from './src/monitor/index.js';
-import { createDaemon, DAEMON_STATE } from './src/daemon/index.js';
 import { MultiAgentThinker } from './src/thinker.js';
-import { AssetScoutAdapter } from './src/agents/asset-scout.js';
 import { installStreamJsonStdoutGuard } from './src/ops/stream-json-stdout-guard.js';
+import { parseCliArgs } from './src/cli/parse-args.js';
+import { startDaemon, stopDaemon, safeStopDaemon } from './src/cli/runtime/daemon-lifecycle.js';
+import { executePlan } from './src/cli/runtime/execute-plan.js';
+import { TerminalDisplay } from './src/display/terminal.js';
+import { healthCheck } from './src/agents/index.js';
 import { promises as fs } from 'fs';
-import { existsSync, readdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createInterface } from 'readline';
-import { exec } from 'child_process';
 import { EventEmitter } from 'events';
 
 const globalBus = new EventEmitter();
-let isMonitorStarted = false;
-
-async function startMonitor() {
-  if (isMonitorStarted) return;
-  const monitor = new ProgressMonitor(globalBus, 8088);
-  const monitorUrl = await monitor.start();
-  console.log(`\x1b[36m🚀 已开启智能进度看板: ${monitorUrl}\x1b[0m\n`);
-  if (process.platform === 'win32') exec(`start ${monitorUrl}`);
-  else if (process.platform === 'darwin') exec(`open ${monitorUrl}`);
-  else exec(`xdg-open ${monitorUrl}`);
-  isMonitorStarted = true;
-  return monitor;
-}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const args = process.argv.slice(2);
-const command = args[0];
+const {
+  command,
+  rawArgs,
+  outputFormat,
+  executeDir,
+  daemonMode,
+  daemonDataDir,
+  dryRun,
+  safe,
+} = parseCliArgs(process.argv);
 
-function normalizeOutputFormat(argv = []) {
-  let format = process.env.NCF_OUTPUT_FORMAT || process.env.OUTPUT_FORMAT || '';
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg) continue;
-    if (arg.startsWith('--output-format=')) {
-      format = arg.split('=')[1] || format;
-      argv.splice(i, 1);
-      i -= 1;
-      continue;
-    }
-    if (arg === '--output-format' && argv[i + 1]) {
-      format = argv[i + 1];
-      argv.splice(i, 2);
-      i -= 1;
-    }
-  }
-  return String(format || '').toLowerCase();
-}
-
-const outputFormat = normalizeOutputFormat(args);
 if (outputFormat === 'stream-json') {
   installStreamJsonStdoutGuard();
 }
 
-let executeDir = process.cwd();
-let daemonDataDir = null;
-let daemonMode = true;
-
-const dirIndex = args.indexOf('--dir');
-if (dirIndex !== -1 && args[dirIndex + 1]) {
-  executeDir = path.resolve(process.cwd(), args[dirIndex + 1]);
-  args.splice(dirIndex, 2);
-}
-
-const daemonIndex = args.indexOf('--no-daemon');
-if (daemonIndex !== -1) {
-  daemonMode = false;
-  args.splice(daemonIndex, 1);
-}
-
-const mockIndex = args.findIndex((arg) => arg === '--mock' || arg === '--dry-run');
-if (mockIndex !== -1) {
+if (dryRun) {
   process.env.NCF_MOCK = '1';
   console.log(
     '\x1b[33m🚀 警告: 已启用 MOCK/DRY-RUN 模式，所有写操作和命令执行将被沙箱模拟。\x1b[0m',
   );
-  args.splice(mockIndex, 1);
 }
 
-const mainDir = path.resolve(__dirname);
-const safeExecDir = executeDir.toLowerCase();
-const safeMainDir = mainDir.toLowerCase();
-
-if (safeExecDir === safeMainDir || safeExecDir.startsWith(safeMainDir + path.sep)) {
+if (!safe) {
   console.error('\\x1b[31m错误: 禁止在主程序文件夹下工作！\\x1b[0m');
   console.error(`请使用 --dir 参数指定另一工作目录，例如:`);
   console.error(`  bun cli.js run "需求描述" --dir ./my-project`);
   console.error(`  bun cli.js run "需求描述" --dir D:\\projects\\my-app`);
   process.exit(1);
 }
-
-daemonDataDir = path.join(executeDir, '.daemon');
 
 process.on('unhandledRejection', (error) => {
   console.error('\x1b[31mUnhandled Rejection:\x1b[0m', error?.message || error);
@@ -134,26 +82,10 @@ async function main() {
     console.log('='.repeat(50));
     console.log();
 
+    new TerminalDisplay(globalBus).attach();
+
     if (daemonMode) {
-      console.log('🔮 初始化持久守护进程...\n');
-      globalDaemon = await createDaemon({
-        dataDir: daemonDataDir,
-        heartbeatInterval: 30000,
-        autoSaveInterval: 60000,
-        recoveryEnabled: true,
-      });
-
-      globalDaemon.on('heartbeat', (health) => {
-        if (process.env.DEBUG) {
-          console.log(`💓 心跳 [${new Date().toLocaleTimeString()}]`, {
-            state: health.state,
-            memory: Math.round(health.memory.heapUsed / 1024 / 1024) + 'MB',
-          });
-        }
-      });
-
-      await globalDaemon.start();
-      console.log(`✅ 守护进程已启动 (PID: ${globalDaemon.pid})\n`);
+      globalDaemon = await startDaemon({ daemonDataDir, executeDir });
     }
 
     switch (command) {
@@ -166,19 +98,19 @@ async function main() {
       case 'plan':
       case '--plan':
       case 'p':
-        await cmdPlan(args[1]);
+        await cmdPlan(rawArgs[1]);
         break;
 
       case 'execute':
       case '--execute':
       case 'e':
-        await cmdExecute(args[1]);
+        await cmdExecute(rawArgs[1]);
         break;
 
       case 'run':
       case '--run':
       case 'r':
-        await cmdRun(args[1]);
+        await cmdRun(rawArgs[1]);
         break;
 
       case 'think':
@@ -199,12 +131,12 @@ async function main() {
 
       case 'logs':
       case 'l':
-        await cmdLogs(args[1]);
+        await cmdLogs(rawArgs[1]);
         break;
 
       case 'config':
       case 'c':
-        await cmdConfig(args[1], args[2]);
+        await cmdConfig(rawArgs[1], rawArgs[2]);
         break;
 
       case 'help':
@@ -227,22 +159,13 @@ async function main() {
     }
 
     if (globalDaemon) {
-      await globalDaemon.saveState();
-      await globalDaemon.stop();
-      console.log('\n🔮 运行状态已持久化保存至守护进程数据目录。');
-      console.log(`   数据目录: ${daemonDataDir}`);
-      console.log(`   查看状态: bun cli.js daemon --dir "${executeDir}"`);
+      await stopDaemon(globalDaemon, { daemonDataDir, executeDir });
     }
 
     process.exit(process.exitCode || 0);
   } catch (error) {
     if (globalDaemon) {
-      try {
-        await globalDaemon.saveState();
-        await globalDaemon.stop();
-      } catch (e) {
-        // ignore
-      }
+      await safeStopDaemon(globalDaemon);
     }
     console.error('\x1b[31mFatal Error:\x1b[0m', error?.message || error);
     if (process.env.DEBUG) console.error(error.stack);
@@ -358,8 +281,6 @@ async function cmdExecute(input) {
     process.exit(1);
   }
 
-  await startMonitor();
-
   let plan;
 
   if (input.endsWith('.json')) {
@@ -406,7 +327,7 @@ async function cmdExecute(input) {
   }
 
   globalBus.emit('plan:ready', { plan });
-  await executePlan(plan);
+  await executePlan({ plan, executeDir, globalDaemon, globalBus });
 }
 
 async function collectPlanCandidates(baseDir) {
@@ -502,15 +423,13 @@ async function resolveReusablePlan(baseDir) {
 }
 
 async function cmdRun(requirement) {
-  const autoYes = args.includes('--yes') || args.includes('-y');
-  const actualArgs = args.filter((a) => !a.startsWith('--yes') && a !== '-y');
+  const autoYes = rawArgs.includes('--yes') || rawArgs.includes('-y');
+  const actualArgs = rawArgs.filter((a) => !a.startsWith('--yes') && a !== '-y');
   const rawRequirement = actualArgs.slice(1).join(' ').trim();
   const rainmakerAutoMode = !rawRequirement;
   requirement = rainmakerAutoMode
     ? `Rainmaker 自动巡检 ${executeDir}，按“能跑 > 防坑 > 优化”生成修复计划并执行`
     : rawRequirement;
-
-  await startMonitor();
 
   console.log('='.repeat(50));
   console.log('='.repeat(50));
@@ -604,222 +523,7 @@ async function cmdRun(requirement) {
   console.log('='.repeat(50));
   console.log();
 
-  await executePlan(plan, requirement);
-}
-
-async function executePlan(plan, rawContext = '') {
-  try {
-    await fs.access(executeDir, fs.constants.W_OK);
-  } catch {
-    console.error(`\x1b[31mExecute directory not found or not writable: ${executeDir}\x1b[0m`);
-    process.exit(1);
-  }
-
-  if (globalDaemon) {
-    const session = await globalDaemon.createSession({
-      name: `exec-${plan.project.name}-${Date.now()}`,
-      mode: 'foreground',
-      metadata: {
-        project: plan.project.name,
-        plan: plan.project,
-      },
-    });
-
-    await globalDaemon.getMemory().store(
-      'episodic',
-      {
-        type: 'execution_start',
-        project: plan.project.name,
-        sessionId: session.id,
-        taskCount: plan.tasks.length,
-      },
-      {
-        tags: ['execution', plan.project.name, 'start'],
-      },
-    );
-  }
-
-  console.log('开始执行计划...\n');
-
-  // ============================
-  // 后台并行素材获取预判与调用 (AssetScout)
-  // ============================
-  const isGameLike = /游戏|game|打怪|射击|消除|闯关|模拟|生存/i.test((plan.project?.type || '') + ' ' + (plan.project?.description || '') + ' ' + rawContext);
-  if (isGameLike) {
-    console.log('\\x1b[36m🤖 侦测到项目包含互动/游戏元素，正在由架构师评估是否需要启动 AssetScout 寻宝...\\x1b[0m');
-
-    let localFilesDoc = '目录下目前没有明确的美术资源文件（如 png/jpg/wav）';
-    try {
-      const pubPath = path.join(executeDir, 'public');
-      if (existsSync(pubPath)) {
-        const files = readdirSync(pubPath, { recursive: true }).filter(f => f.match(/\\.(png|jpg|jpeg|gif|webp|svg|wav|mp3|ogg)$/i));
-        if (files.length > 0) {
-          localFilesDoc = `public/ 目录下已有以下素材：\\n` + files.slice(0, 10).join(', ') + (files.length > 10 ? ' ...等' : '');
-        }
-      }
-    } catch(e) {}
-
-    const thinker = new MultiAgentThinker({ verbose: false });
-    const prompt = `【当前执行计划与已有目录状态评估】
-项目：${plan.project?.name}
-描述：${plan.project?.description || rawContext}
-当前素材：${localFilesDoc}
-
-请作为技术总监判断：该项目当前是否绝对需要派出 AssetScout 去互联网寻找并下载全新的公共美术/音频素材包？
-规则：
-1. 如果已存在素材或描述中不需要特殊的精美素材资源（用纯色块、原生UI实现即可），请回复 NO。
-2. 只有明确需要如太空飞船、RPG人物、贴图等特殊素材且当前没有时，回复 YES。
-
-请仅回复 YES 或 NO，不要有任何其他内容。`;
-
-    try {
-      const decision = await thinker._callAgent('Architect', '你只负责输出 YES 或 NO', prompt, 0.1);
-      if (decision.includes('YES')) {
-        console.log('\\x1b[35m🎨 架构师下达获取指令，正在后台并发启动 AssetScout 自动寻宝模块获取素材...\\x1b[0m');
-        const scout = new AssetScoutAdapter({ name: 'AssetScout' });
-        scout.on('action', (action) => {
-          globalBus.emit('agent:action', { agent: scout.name, ...action });
-        });
-        const scoutTask = {
-          id: `scout_${Date.now()}`,
-          description: `此项目急需符合风格的素材包：\\n${plan.project?.description || rawContext}`,
-          context: { project_root: executeDir }
-        };
-        scout.execute(scoutTask).then(res => {
-          if (res.success) console.log('\\n\\x1b[32m✅ [后台并行] 美术包寻宝圆满完成！已解压就绪。\\x1b[0m\\n');
-          else console.log('\\n\\x1b[33m⚠️ [后台并行] 素材获取未全数完成: ' + (res.errors?.[0] || '未知') + '\\x1b[0m\\n');
-        }).catch(e => console.log('\\n\\x1b[31m❌ [后台并行] 素材获取严重崩溃: ' + e.message + '\\x1b[0m\\n'));
-      } else {
-         console.log('\\x1b[32m✅ 架构师评估：当前已有素材或无需外部图片，已跳过寻宝。\\x1b[0m');
-      }
-    } catch(err) {
-      console.log('\\x1b[33m⚠️ 架构师评估失败，为安全起见跳过寻宝。\\x1b[0m');
-    }
-  }
-
-  console.log('检查 Agent...\n');
-  const status = await healthCheck();
-  const allReady = Object.values(status).every((v) => v);
-  if (!allReady) {
-    console.log('\x1b[33m警告: 部分 Agent 不可用，继续执行...\x1b[0m\n');
-  }
-
-  const engine = createEngine({
-    project_root: executeDir,
-  });
-
-  if (globalDaemon) {
-    engine.on('task:complete', async (task) => {
-      await globalDaemon.getMemory().store(
-        'episodic',
-        {
-          type: 'task_complete',
-          taskId: task.id,
-          taskName: task.name,
-          project: plan.project.name,
-        },
-        {
-          tags: ['task', 'complete', plan.project.name],
-          priority: 1,
-        },
-      );
-    });
-
-    engine.on('task:failed', async (task) => {
-      await globalDaemon.getMemory().store(
-        'episodic',
-        {
-          type: 'task_failed',
-          taskId: task.id,
-          taskName: task.name,
-          error: task.error,
-          project: plan.project.name,
-        },
-        {
-          tags: ['task', 'failed', plan.project.name],
-          priority: 2,
-        },
-      );
-    });
-  }
-
-  const supervisor = new Supervisor(engine, {
-    logger: { logDir: path.join(executeDir, '.ncf', 'logs') },
-  });
-
-  await startMonitor();
-
-  // 监听前端控制信令
-  globalBus.on('control:pause', () => engine && engine.pause());
-  globalBus.on('control:resume', () => engine && engine.resume());
-
-  const forwardEvents = [
-    'milestone:start',
-    'milestone:done',
-    'task:start',
-    'task:done',
-    'task:error',
-    'task:review',
-    'task:progress',
-    'task:retry_wait',
-    'agent:action',
-    'engine:paused',
-    'engine:resumed',
-  ];
-  forwardEvents.forEach((e) => engine.on(e, (data) => globalBus.emit(e, data)));
-
-  console.log('='.repeat(50));
-  console.log(`开始执行: ${plan.project.name}`);
-  console.log(`总任务数: ${plan.tasks.length}`);
-  console.log('='.repeat(50));
-  console.log();
-
-  const startTime = Date.now();
-  const result = await engine.execute(plan);
-  const duration = Math.round((Date.now() - startTime) / 1000);
-
-  console.log();
-  console.log('='.repeat(50));
-  console.log('执行完成');
-  console.log('='.repeat(50));
-  console.log();
-  console.log(`状态: ${result.status}`);
-  console.log(`完成: ${result.summary.done}/${result.summary.total} 任务`);
-  console.log(`失败: ${result.summary.failed} 任务`);
-  console.log(`需人工: ${result.summary.needs_human} 任务`);
-  console.log(`评审轮次: ${result.summary.total_review_cycles} 次`);
-  console.log(`平均分: ${result.summary.average_score}`);
-  console.log(`耗时: ${duration}s`);
-
-  if (globalDaemon) {
-    await globalDaemon.getMemory().store(
-      'episodic',
-      {
-        type: 'execution_complete',
-        project: plan.project.name,
-        status: result.status,
-        summary: result.summary,
-        duration,
-        timestamp: Date.now(),
-      },
-      {
-        tags: ['execution', plan.project.name, 'complete'],
-        priority: 2,
-      },
-    );
-  }
-
-  globalBus.emit('execution:done', { result, duration });
-
-  if (result.summary.needs_human > 0) {
-    console.log('\n\x1b[33m注意: 部分任务需要人工介入\x1b[0m');
-    process.exitCode = 1;
-    return;
-  }
-
-  if (result.status !== 'success') {
-    process.exitCode = 1;
-  }
+  await executePlan({ plan, rawContext: requirement, executeDir, globalDaemon, globalBus });
 }
 
 function showHelp() {
@@ -950,7 +654,7 @@ async function cmdLogs(type = 'execution') {
       return;
     }
 
-    const tail = args.includes('--tail') ? parseInt(args[args.indexOf('--tail') + 1]) || 20 : 20;
+    const tail = rawArgs.includes('--tail') ? parseInt(rawArgs[rawArgs.indexOf('--tail') + 1]) || 20 : 20;
     const latestFiles = logFiles.sort().slice(-3);
 
     console.log(`\n📋 ${type} 日志 (最新 ${latestFiles.length} 个文件，显示最后 ${tail} 行):\n`);
@@ -1018,8 +722,8 @@ async function cmdConfig(key, value) {
 }
 
 async function cmdThink() {
-  const autoYes = args.includes('--yes') || args.includes('-y');
-  const actualArgs = args.filter(
+  const autoYes = rawArgs.includes('--yes') || rawArgs.includes('-y');
+  const actualArgs = rawArgs.filter(
     (a) => !a.startsWith('--yes') && a !== '-y' && a !== '--verbose' && a !== '-v',
   );
   const question = actualArgs.slice(1).join(' ');
@@ -1039,7 +743,6 @@ async function cmdThink() {
   console.log('='.repeat(50) + '\n');
 
   try {
-    await startMonitor();
     globalBus.emit('think:start', { question });
 
     const thinker = new MultiAgentThinker({ verbose });

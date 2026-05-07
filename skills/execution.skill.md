@@ -71,11 +71,9 @@ const { createEngine } = require('./agents');
 
 const engine = createEngine({
   project_root: './project',
-  max_review_cycles: 3,
-  task_timeout: 300000, // 5分钟超时
+  task_timeout: 300000, // 5分钟超时（0 = 不限）
   max_retries: 2, // 重试次数
   max_concurrent_tasks: 3, // 最大并发
-  token_budget: 100000, // Token 预算
 });
 
 const result = await engine.execute(plan);
@@ -83,13 +81,13 @@ const result = await engine.execute(plan);
 
 ## 配置选项
 
-| 配置项                 | 默认值   | 说明               |
-| ---------------------- | -------- | ------------------ |
-| `max_review_cycles`    | 3        | 最大评审修正次数   |
-| `task_timeout`         | 300000ms | 任务超时时间       |
-| `max_retries`          | 2        | Agent 调用重试次数 |
-| `max_concurrent_tasks` | 3        | 最大并发任务数     |
-| `token_budget`         | 100000   | Token 预算上限     |
+| 配置项                 | 默认值 | 说明                                                 |
+| ---------------------- | ------ | ---------------------------------------------------- |
+| `max_review_cycles`    | 0      | 最大评审修正次数（0 = 不限，由收敛控制器保护）        |
+| `task_timeout`         | 0      | 任务超时时间（0 = 不限）                              |
+| `max_retries`          | 2      | Agent 调用重试次数                                    |
+| `max_concurrent_tasks` | 3      | 最大并发任务数                                        |
+| `token_budget`         | —      | 由各个 Agent 自行管理，Engine 不设总预算              |
 
 ## 任务状态
 

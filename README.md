@@ -144,18 +144,24 @@ flowchart LR
 
 ### 核心模块
 
-| 模块                     | 文件                                  | 职责                         |
-| ------------------------ | ------------------------------------- | ---------------------------- |
-| **Planner**              | `src/planner.js`                      | 需求分析、任务分解、MCP 集成 |
-| **ExecutionEngine**      | `src/engine.js`                       | 任务调度、评审循环、超时控制 |
-| **NativeCoder**          | `src/agents/native-coder.js`          | 调用大模型生成代码           |
-| **NativeReviewer**       | `src/agents/native-reviewer.js`       | 代码质量评审                 |
-| **Supervisor**           | `src/supervisor.js`                   | 进度追踪、风险评估           |
-| **SelfCorrector**        | `src/corrector.js`                    | 根因分析、自动修复           |
-| **MultiAgentThinker**    | `src/thinker.js`                      | 4 角色并行思考               |
-| **UniversalToolbox**     | `src/agents/universal-toolbox.js`     | 文件/Bash/Git/包管理工具     |
-| **PermissionClassifier** | `src/agents/permission-classifier.js` | 操作风险评估                 |
-| **ProgressMonitor**      | `src/monitor/index.js`                | SSE 实时监控面板             |
+| 模块                         | 文件                                      | 职责                         |
+| ---------------------------- | ----------------------------------------- | ---------------------------- |
+| **Planner**                  | `src/planner.js`                          | 需求分析、任务分解、MCP 集成 |
+| **ExecutionEngine**          | `src/engine.js`                           | 编排门面，调度子模块         |
+| **NativeCoder**              | `src/agents/native-coder.js`              | 调用大模型生成代码           |
+| **NativeReviewer**           | `src/agents/native-reviewer.js`           | 代码质量评审                 |
+| **Supervisor**               | `src/supervisor.js`                       | 进度追踪、风险评估           |
+| **SelfCorrector**            | `src/corrector.js`                        | 根因分析、自动修复           |
+| **MultiAgentThinker**        | `src/thinker.js`                          | 4 角色并行思考               |
+| **UniversalToolbox**         | `src/agents/universal-toolbox.js`         | 工具箱门面，委托 14 个工具文件 |
+| **PermissionClassifier**     | `src/agents/permission-classifier.js`     | 操作风险评估                 |
+| **MilestoneScheduler**       | `src/engine/milestone-scheduler.js`       | 依赖图、并发、死锁检测       |
+| **ReviewLoopRunner**         | `src/engine/review-loop-runner.js`        | 评审-修正主循环              |
+| **ReviewConvergenceController** | `src/convergence/review-convergence-controller.js` | 收敛控制，防无限循环    |
+| **ExecutionContextBuilder**  | `src/engine/context-builder.js`           | 上下文、规则、goal invariant |
+| **LogChannel**               | `src/ops/log-channel.js`                  | 统一日志通道（stdout/stderr） |
+| **Contracts**                | `src/contracts/`                          | Agent 结果 & Plan 形状校验   |
+| **Daemon**                   | `src/daemon/`                             | 状态持久化、断点恢复         |
 
 ---
 
@@ -262,7 +268,7 @@ nexus-code-forge/
 ├── cli.js                        # CLI 入口
 ├── daemon.js                     # 守护进程入口
 ├── src/
-│   ├── engine.js                 # 执行引擎
+│   ├── engine.js                 # 执行引擎（编排门面）
 │   ├── planner.js               # 规划器（MCP 集成）
 │   ├── supervisor.js            # 监督者
 │   ├── corrector.js             # 修正器
@@ -276,8 +282,66 @@ nexus-code-forge/
 │   │   ├── native-coder.js     # 编程 Agent
 │   │   ├── native-reviewer.js  # 评审 Agent
 │   │   ├── minimax-mcp.js      # MiniMax MCP 适配器
-│   │   ├── universal-toolbox.js # 工具箱
-│   │   └── permission-classifier.js # 权限分类器
+│   │   ├── universal-toolbox.js # 工具箱（307 行，委托 14 个工具文件）
+│   │   ├── permission-classifier.js # 权限分类器
+│   │   ├── rainmaker.js        # 全局巡检与修复规划
+│   │   ├── asset-scout.js      # 资源侦察
+│   │   ├── runtime/
+│   │   │   ├── guard.js        # 执行守护
+│   │   │   ├── stop-hooks.js   # 停止钩子
+│   │   │   ├── tool-orchestrator.js # 工具编排
+│   │   │   ├── trace.js        # 追踪记录
+│   │   │   └── context-builder.js # 上下文构建
+│   │   └── tools/              # 14 个工具类别文件
+│   │       ├── file-tools.js
+│   │       ├── bash-tools.js
+│   │       ├── git-tools.js
+│   │       ├── package-manager-tools.js
+│   │       ├── network-tools.js
+│   │       ├── code-edit-tools.js
+│   │       ├── lsp-tools.js
+│   │       ├── subagent-tools.js
+│   │       ├── task-tools.js
+│   │       ├── workflow-tools.js
+│   │       ├── mcp-tools.js
+│   │       ├── agent-tools.js
+│   │       ├── interactive-tools.js
+│   │       ├── utility-tools.js
+│   │       └── path-safety.js
+│   │
+│   ├── engine/                  # Engine 子模块
+│   │   ├── milestone-scheduler.js # 里程碑调度
+│   │   ├── context-builder.js   # 执行上下文构建
+│   │   ├── summary-builder.js   # 摘要生成
+│   │   └── review-loop-runner.js # 评审-修正循环
+│   │
+│   ├── cli/                     # CLI 子模块
+│   │   ├── parse-args.js       # 参数解析
+│   │   └── runtime/
+│   │       ├── daemon-lifecycle.js # 守护进程生命周期
+│   │       └── execute-plan.js    # 计划执行
+│   │
+│   ├── contracts/               # 数据契约
+│   │   ├── agent-result.js     # Agent 结果标准化
+│   │   └── plan.js             # Plan 形状校验
+│   │
+│   ├── convergence/             # 收敛控制
+│   │   ├── review-convergence-controller.js
+│   │   ├── execution-policy-engine.js
+│   │   ├── issue-fingerprint-engine.js
+│   │   ├── progress-ledger.js
+│   │   ├── project-state-probe.js
+│   │   └── recovery-coordinator.js
+│   │
+│   ├── review/                  # 评审基础设施
+│   │   ├── review-input-gate.js
+│   │   ├── reviewer-output-parser.js
+│   │   └── error-codes.js
+│   │
+│   ├── ops/                     # 运维工具
+│   │   ├── log-channel.js      # 日志通道
+│   │   ├── release-observer.js # 发布观测
+│   │   └── stream-json-stdout-guard.js
 │   │
 │   ├── daemon/
 │   │   ├── index.js            # 主入口
@@ -286,9 +350,8 @@ nexus-code-forge/
 │   │   ├── task-queue.js       # 任务队列
 │   │   └── memory-store.js     # 内存存储
 │   │
-│   └── monitor/
-│       ├── index.js            # Bun.serve + SSE
-│       └── public/index.html   # Web 仪表盘
+│   └── display/
+│       └── terminal.js         # 终端输出
 │
 ├── config/
 │   ├── index.js                 # 配置加载器
@@ -298,7 +361,7 @@ nexus-code-forge/
 │
 ├── rules/                      # AI 行为约束
 ├── skills/                     # 技能定义
-└── tests/                      # 单元测试
+└── tests/                      # 单元测试（109 pass / 0 fail）
 ```
 
 ---
@@ -318,6 +381,19 @@ nexus-code-forge/
 ---
 
 ## 更新日志
+
+### v2.1.0 — 2026-05-07
+
+| 变更                              | 说明                             |
+| --------------------------------- | -------------------------------- |
+| 🧱 Engine 拆分                    | 拆出 MilestoneScheduler / ReviewLoopRunner / ContextBuilder / SummaryBuilder（−18%） |
+| 🧰 Toolbox 拆分                   | 拆出 14 个工具类别文件，universal-toolbox.js −87%（2382→307 行） |
+| 📋 CLI 收缩                      | 参数解析 / lifecycle / executePlan 抽离（−37%） |
+| 📜 Contracts 固化                 | Agent Result & Plan 形状校验     |
+| 🎯 收敛控制                       | ReviewConvergenceController + 5 个子模块 |
+| 📝 日志统一                       | LogChannel（stdout/stderr 分离） |
+| 📖 文档收敛                       | README + skills 默认值与代码一致 |
+| 🧪 测试                           | 109 pass / 0 fail，9 个测试文件  |
 
 ### v2.0.0 — 2026-03-31
 

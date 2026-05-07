@@ -1,10 +1,22 @@
 import { ExecutionEngine } from '../src/engine.js';
+import { createEngine, config } from '../src/agents/index.js';
 import { existsSync, readFileSync } from 'fs';
 
 describe('ExecutionEngine', () => {
   it('should be instantiable without throwing', () => {
     const engine = new ExecutionEngine({ project_root: process.cwd() });
     expect(engine).toBeInstanceOf(ExecutionEngine);
+  });
+
+  it('should create engine with project config defaults and allow overrides', () => {
+    const engine = createEngine({
+      project_root: process.cwd(),
+      convergence: { window_size: 9 },
+    });
+    expect(engine).toBeInstanceOf(ExecutionEngine);
+    expect(engine.config.feature_flags).toEqual(expect.objectContaining(config.engine.feature_flags));
+    expect(engine.config.review).toEqual(config.review);
+    expect(engine.config.convergence.window_size).toBe(9);
   });
 
   it('should maintain state of checkpoints correctly', () => {
@@ -592,20 +604,16 @@ describe('ExecutionEngine', () => {
   it('should expose goal invariant in task execution context', async () => {
     const engine = new ExecutionEngine({ project_root: process.cwd() });
     engine.goalInvariant = { summary: '目标A: 保持认证能力稳定' };
-    const context = await engine._buildContext(
-      {
-        id: 't_ctx',
-        execution_mode: 'probe_replan',
-        replan_plan: { strategy: 'probe_driven_replan' },
+    const task = {
+      id: 't_ctx',
+      execution_mode: 'probe_replan',
+      replan_plan: { strategy: 'probe_driven_replan' },
+      _preflight: {
+        already_satisfied: false,
+        missing_artifacts: ['src/index.js'],
       },
-      { project: { name: 'p' } },
-      {
-        preflight: {
-          already_satisfied: false,
-          missing_artifacts: ['src/index.js'],
-        },
-      },
-    );
+    };
+    const context = await engine._buildContext(task);
     expect(context.goal_invariant).toContain('目标A');
     expect(context.execution_mode).toBe('probe_replan');
     expect(context.replan_plan?.strategy).toBe('probe_driven_replan');

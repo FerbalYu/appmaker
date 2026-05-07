@@ -6,6 +6,14 @@ describe('Planner', () => {
   beforeEach(() => {
     // mock api calls
     jest.spyOn(require('../src/thinker').MultiAgentThinker.prototype, 'think').mockResolvedValue('Mocked thought process...');
+    jest.spyOn(require('../src/thinker').MultiAgentThinker.prototype, 'thinkForPlanning').mockResolvedValue({
+      core_requirement: '带用户认证的商城系统',
+      risks: ['认证安全风险', '支付集成复杂'],
+      technical_approach: '使用 JWT + OAuth2 认证，数据库存储用户',
+      creative_alternatives: ['第三方认证服务', '无密码认证'],
+      open_questions: ['是否需要支持社交登录'],
+      analysis_summary: '团队认为需要先搭建认证框架再开发商城功能',
+    });
     planner = new Planner();
     planner.dispatcher = {
        dispatch: jest.fn().mockResolvedValue({
